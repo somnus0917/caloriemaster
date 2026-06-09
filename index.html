@@ -1,0 +1,2032 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>卡路里追踪</title>
+    <style>
+      :root {
+        --c-bg: #ffffff;
+        --c-bg2: #f5f5f3;
+        --c-bg3: #eef0ea;
+        --c-border: rgba(0, 0, 0, 0.1);
+        --c-text: #1a1a18;
+        --c-muted: #6b6b67;
+        --c-hint: #9c9a92;
+        --c-green: #1d9e75;
+        --c-green-bg: #e1f5ee;
+        --c-amber: #ba7517;
+        --c-amber-bg: #faeeda;
+        --c-red: #e24b4a;
+        --c-red-bg: #fcebeb;
+        --c-blue: #185fa5;
+        --c-blue-bg: #e6f1fb;
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.14);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --c-bg: #1a1a18;
+          --c-bg2: #252523;
+          --c-bg3: #30302d;
+          --c-border: rgba(255, 255, 255, 0.1);
+          --c-text: #e8e6de;
+          --c-muted: #9c9a92;
+          --c-hint: #6b6b67;
+          --shadow: 0 18px 50px rgba(0, 0, 0, 0.36);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        max-width: 480px;
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 0;
+        background: var(--c-bg2);
+        color: var(--c-text);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+      button {
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      .app-shell {
+        min-height: 100vh;
+        background: var(--c-bg);
+        border-left: 0.5px solid var(--c-border);
+        border-right: 0.5px solid var(--c-border);
+        position: relative;
+        overflow-x: hidden;
+      }
+
+      .top-nav {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 56px;
+        padding: 0 18px;
+        background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+        border-bottom: 0.5px solid var(--c-border);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .nav-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .screen {
+        display: none;
+        min-height: calc(100vh - 56px);
+        padding: 18px 16px 92px;
+      }
+
+      .screen.active {
+        display: block;
+      }
+
+      #screen-camera,
+      #screen-confirm {
+        min-height: 100vh;
+        padding: 0 16px 28px;
+      }
+
+      .screen-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 58px;
+      }
+
+      .screen-title {
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .text-xl {
+        font-size: 22px;
+        font-weight: 500;
+      }
+      .text-lg {
+        font-size: 18px;
+        font-weight: 500;
+      }
+      .text-base {
+        font-size: 16px;
+      }
+      .text-sm {
+        font-size: 13px;
+      }
+      .text-xs {
+        font-size: 11px;
+      }
+
+      .card {
+        background: var(--c-bg);
+        border: 0.5px solid var(--c-border);
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin-bottom: 0.75rem;
+      }
+
+      .panel {
+        background: var(--c-bg2);
+        border: 0.5px solid var(--c-border);
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+
+      .btn-primary {
+        width: 100%;
+        padding: 12px;
+        border-radius: 12px;
+        background: var(--c-blue-bg);
+        color: var(--c-blue);
+        border: none;
+        font-size: 15px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      .btn-solid {
+        width: 100%;
+        padding: 13px;
+        border-radius: 12px;
+        background: var(--c-blue);
+        color: #fff;
+        border: none;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+
+      .btn-ghost {
+        padding: 6px 14px;
+        border-radius: 8px;
+        background: transparent;
+        border: 0.5px solid var(--c-border);
+        color: var(--c-muted);
+        font-size: 13px;
+        cursor: pointer;
+      }
+
+      .icon-btn {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        display: inline-grid;
+        place-items: center;
+        border: 0.5px solid var(--c-border);
+        background: var(--c-bg);
+        color: var(--c-muted);
+        cursor: pointer;
+      }
+
+      .hero-total {
+        display: grid;
+        gap: 12px;
+        padding: 18px;
+        background: linear-gradient(
+          135deg,
+          color-mix(in srgb, var(--c-green-bg) 48%, var(--c-bg)),
+          var(--c-bg)
+        );
+        border: 0.5px solid var(--c-border);
+        border-radius: 12px;
+        margin-bottom: 14px;
+      }
+
+      .hero-total.hero-warn {
+        background: linear-gradient(
+          135deg,
+          color-mix(in srgb, var(--c-amber-bg) 58%, var(--c-bg)),
+          var(--c-bg)
+        );
+      }
+
+      .hero-total.hero-over {
+        background: linear-gradient(
+          135deg,
+          color-mix(in srgb, var(--c-red-bg) 62%, var(--c-bg)),
+          var(--c-bg)
+        );
+      }
+
+      .total-row {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .total-kcal {
+        font-size: 34px;
+        line-height: 1;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+      .goal-copy {
+        color: var(--c-muted);
+        font-size: 13px;
+      }
+
+      .progress-track {
+        height: 10px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--c-border) 70%, transparent);
+        border-radius: 999px;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: inherit;
+        background: var(--c-green);
+        transition:
+          width 0.25s ease,
+          background 0.25s ease;
+      }
+
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .stat-chip {
+        min-width: 0;
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--c-bg) 68%, var(--c-bg2));
+        border: 0.5px solid var(--c-border);
+        padding: 8px 10px;
+      }
+
+      .stat-label {
+        color: var(--c-muted);
+        font-size: 11px;
+        line-height: 1.2;
+      }
+
+      .stat-value {
+        margin-top: 3px;
+        font-size: 15px;
+        font-weight: 700;
+        line-height: 1.15;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-strip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: var(--c-muted);
+        font-size: 12px;
+      }
+
+      .section-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 20px 2px 10px;
+      }
+
+      .empty {
+        padding: 26px 18px;
+        text-align: center;
+        color: var(--c-muted);
+        background: var(--c-bg2);
+        border: 0.5px dashed var(--c-border);
+        border-radius: 12px;
+      }
+
+      .record-card {
+        position: relative;
+        display: grid;
+        grid-template-columns: 52px 1fr auto;
+        gap: 12px;
+        align-items: center;
+        touch-action: pan-y;
+        transition: transform 0.18s ease;
+      }
+
+      .thumb {
+        width: 52px;
+        height: 52px;
+        border-radius: 10px;
+        object-fit: cover;
+        background: var(--c-bg2);
+        border: 0.5px solid var(--c-border);
+        display: grid;
+        place-items: center;
+        color: var(--c-hint);
+        font-size: 22px;
+        overflow: hidden;
+      }
+
+      .record-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        white-space: nowrap;
+      }
+
+      .record-foods {
+        color: var(--c-muted);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .record-cal {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--c-blue);
+      }
+
+      .trend-wrap svg {
+        display: block;
+        width: 100%;
+        height: 120px;
+      }
+
+      .bottom-bar {
+        position: fixed;
+        left: 50%;
+        bottom: 0;
+        z-index: 25;
+        width: min(480px, 100vw);
+        transform: translateX(-50%);
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+        background: color-mix(in srgb, var(--c-bg) 92%, transparent);
+        border-top: 0.5px solid var(--c-border);
+        backdrop-filter: blur(16px);
+      }
+
+      .bottom-bar.hidden {
+        display: none;
+      }
+
+      .camera-stage {
+        display: grid;
+        gap: 18px;
+        min-height: calc(100vh - 86px);
+        align-content: center;
+      }
+
+      .viewfinder {
+        aspect-ratio: 16 / 9;
+        border-radius: 16px;
+        border: 1px solid var(--c-border);
+        background:
+          linear-gradient(
+            90deg,
+            transparent 48%,
+            color-mix(in srgb, var(--c-border) 60%, transparent) 49%,
+            transparent 51%
+          ),
+          linear-gradient(
+            0deg,
+            transparent 48%,
+            color-mix(in srgb, var(--c-border) 60%, transparent) 49%,
+            transparent 51%
+          ),
+          var(--c-bg2);
+        position: relative;
+        overflow: hidden;
+        display: grid;
+        place-items: center;
+      }
+
+      .hand-guide {
+        width: 42%;
+        min-width: 138px;
+        aspect-ratio: 1.55;
+        border: 1.5px dashed var(--c-green);
+        border-radius: 14px;
+        display: grid;
+        place-items: center;
+        color: var(--c-green);
+        font-size: 13px;
+        background: color-mix(in srgb, var(--c-green-bg) 42%, transparent);
+      }
+
+      .finder-copy {
+        position: absolute;
+        left: 18px;
+        right: 18px;
+        bottom: 14px;
+        color: var(--c-muted);
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .camera-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .preview-image {
+        width: 100%;
+        max-height: 220px;
+        object-fit: cover;
+        border-radius: 14px;
+        border: 0.5px solid var(--c-border);
+        margin-bottom: 14px;
+        background: var(--c-bg2);
+      }
+
+      .confirm-summary {
+        position: sticky;
+        top: 0;
+        z-index: 18;
+        margin: 0 -16px 14px;
+        padding: 12px 16px;
+        background: color-mix(in srgb, var(--c-bg) 94%, transparent);
+        border-bottom: 0.5px solid var(--c-border);
+        backdrop-filter: blur(16px);
+      }
+
+      .confirm-summary .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .food-card {
+        padding: 14px;
+      }
+
+      .food-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .food-name {
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .calories {
+        font-size: 13px;
+        color: var(--c-blue);
+        font-weight: 700;
+      }
+
+      .food-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: -4px 0 12px;
+      }
+
+      .meta-chip {
+        border-radius: 999px;
+        background: var(--c-bg2);
+        color: var(--c-muted);
+        font-size: 11px;
+        line-height: 1.2;
+        padding: 4px 8px;
+      }
+
+      .meta-chip.source-boohee {
+        background: var(--c-green-bg);
+        color: var(--c-green);
+      }
+
+      .meta-chip.light-2 {
+        background: var(--c-amber-bg);
+        color: var(--c-amber);
+      }
+
+      .meta-chip.light-3 {
+        background: var(--c-red-bg);
+        color: var(--c-red);
+      }
+
+      .badge {
+        font-size: 10px;
+        padding: 2px 7px;
+        border-radius: 10px;
+        white-space: nowrap;
+      }
+      .badge-high {
+        background: var(--c-green-bg);
+        color: var(--c-green);
+      }
+      .badge-med {
+        background: var(--c-amber-bg);
+        color: var(--c-amber);
+      }
+      .badge-low {
+        background: var(--c-red-bg);
+        color: var(--c-red);
+      }
+
+      .adjust-tabs {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .adjust-tab.active {
+        color: var(--c-blue);
+        background: var(--c-blue-bg);
+        border-color: transparent;
+      }
+
+      input[type="range"] {
+        width: 100%;
+        accent-color: var(--c-blue);
+      }
+
+      .slider-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        color: var(--c-muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+
+      .weight-display,
+      .step-weight-display {
+        color: var(--c-text);
+        font-weight: 700;
+        font-size: 15px;
+      }
+
+      .adjust-stepper {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        align-items: center;
+      }
+
+      .step-weight-display {
+        grid-column: 1 / -1;
+        text-align: center;
+        padding: 4px 0;
+      }
+
+      .adjust-input {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .adjust-input input,
+      .modal-card input,
+      .goal-input {
+        width: 100%;
+        min-height: 42px;
+        border-radius: 10px;
+        border: 0.5px solid var(--c-border);
+        background: var(--c-bg);
+        color: var(--c-text);
+        padding: 8px 10px;
+        outline: none;
+      }
+
+      .portion-presets {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .portion-presets .active {
+        color: var(--c-green);
+        background: var(--c-green-bg);
+        border-color: transparent;
+      }
+
+      .diff-indicator {
+        font-size: 11px;
+        margin-top: 8px;
+        padding: 2px 8px;
+        border-radius: 8px;
+        display: inline-block;
+      }
+      .diff-same {
+        background: var(--c-bg2);
+        color: var(--c-hint);
+      }
+      .diff-up {
+        background: var(--c-red-bg);
+        color: var(--c-red);
+      }
+      .diff-down {
+        background: var(--c-green-bg);
+        color: var(--c-green);
+      }
+
+      .note-box {
+        color: var(--c-muted);
+        font-size: 13px;
+        background: var(--c-bg2);
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+      }
+
+      .history-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: start;
+      }
+
+      .history-date {
+        color: var(--c-muted);
+        font-size: 12px;
+      }
+
+      .modal,
+      #loading-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 80;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        background: rgba(0, 0, 0, 0.42);
+      }
+
+      .modal.show,
+      #loading-overlay.show {
+        display: flex;
+      }
+
+      .modal-card,
+      .loading-card {
+        width: min(420px, 100%);
+        background: var(--c-bg);
+        color: var(--c-text);
+        border-radius: 16px;
+        box-shadow: var(--shadow);
+        padding: 20px;
+        border: 0.5px solid var(--c-border);
+      }
+
+      .modal-card h2 {
+        margin: 0 0 6px;
+        font-size: 20px;
+      }
+
+      .modal-card p {
+        margin: 0 0 16px;
+        color: var(--c-muted);
+      }
+      .modal-card label {
+        display: block;
+        margin: 12px 0 6px;
+        color: var(--c-muted);
+        font-size: 13px;
+      }
+
+      .field-hint {
+        margin-top: 6px;
+        color: var(--c-hint);
+        font-size: 11px;
+        line-height: 1.45;
+      }
+
+      .modal-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .loading-card {
+        display: grid;
+        justify-items: center;
+        text-align: center;
+        gap: 8px;
+        width: min(300px, 100%);
+      }
+
+      .loading-card p {
+        margin: 0;
+      }
+
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 2px solid var(--c-border);
+        border-top-color: var(--c-blue);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      #toast-container {
+        position: fixed;
+        z-index: 100;
+        left: 50%;
+        bottom: calc(76px + env(safe-area-inset-bottom));
+        width: min(448px, calc(100vw - 32px));
+        transform: translateX(-50%);
+        display: grid;
+        gap: 8px;
+        pointer-events: none;
+      }
+
+      .toast {
+        padding: 11px 13px;
+        border-radius: 12px;
+        color: var(--c-text);
+        background: var(--c-bg);
+        border: 0.5px solid var(--c-border);
+        box-shadow: var(--shadow);
+        font-size: 13px;
+      }
+
+      .toast-error {
+        border-color: color-mix(in srgb, var(--c-red) 42%, var(--c-border));
+      }
+
+      .hidden {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app-shell">
+      <nav id="top-nav" class="top-nav">
+        <div class="brand">卡路里追踪</div>
+        <div class="nav-actions">
+          <button
+            class="icon-btn"
+            type="button"
+            onclick="openSetupModal(false)"
+            title="设置"
+            aria-label="设置"
+          >
+            ⚙
+          </button>
+        </div>
+      </nav>
+
+      <!-- Screen A: 首页看板 -->
+      <main id="screen-home" class="screen active">
+        <section class="hero-total">
+          <div class="total-row">
+            <div>
+              <div class="goal-copy">今日热量</div>
+              <div><span id="today-total" class="total-kcal">0</span> kcal</div>
+            </div>
+            <div id="goal-label" class="goal-copy">/ 2000 kcal</div>
+          </div>
+          <div class="progress-track" aria-label="今日热量进度">
+            <div id="goal-progress" class="progress-fill"></div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat-chip">
+              <div class="stat-label">每日目标</div>
+              <div class="stat-value" id="goal-stat">2000</div>
+            </div>
+            <div class="stat-chip">
+              <div class="stat-label">摄入上限</div>
+              <div class="stat-value" id="limit-stat">2300</div>
+            </div>
+            <div class="stat-chip">
+              <div class="stat-label">剩余额度</div>
+              <div class="stat-value" id="remaining-stat">2000</div>
+            </div>
+          </div>
+          <div class="status-strip">
+            <span id="intake-status">距离目标还可以从容安排</span>
+            <span id="goal-pct-label">0%</span>
+          </div>
+          <button
+            class="btn-solid"
+            type="button"
+            onclick="showScreen('camera')"
+          >
+            + 记录一餐
+          </button>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <div class="text-lg">今日记录</div>
+            <button
+              class="btn-ghost"
+              type="button"
+              onclick="showScreen('history')"
+            >
+              全部历史
+            </button>
+          </div>
+          <div id="today-records"></div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <div class="text-lg">近 7 日趋势</div>
+            <div class="text-xs" id="trend-max-label"></div>
+          </div>
+          <div class="panel trend-wrap" id="trend-chart"></div>
+        </section>
+      </main>
+
+      <!-- Screen B: 拍照引导 -->
+      <main id="screen-camera" class="screen">
+        <div class="screen-header">
+          <button class="btn-ghost" type="button" onclick="showScreen('home')">
+            ← 返回
+          </button>
+          <div class="screen-title">拍照引导</div>
+          <button
+            class="btn-ghost"
+            type="button"
+            onclick="runDemoRecognition()"
+          >
+            演示
+          </button>
+        </div>
+        <section class="camera-stage">
+          <div>
+            <div class="viewfinder">
+              <div class="hand-guide">把手放这里</div>
+              <div class="finder-copy">把手放在食物旁边一起拍</div>
+            </div>
+            <div class="panel" style="margin-top: 14px">
+              <div class="text-lg">把手放在食物旁边一起拍</div>
+              <div class="text-sm" style="color: var(--c-muted)">
+                俯拍效果更好，光线充足识别更准
+              </div>
+            </div>
+            <div class="camera-actions">
+              <button
+                class="btn-primary"
+                type="button"
+                onclick="document.getElementById('album-input').click()"
+              >
+                从相册选择
+              </button>
+              <button
+                class="btn-solid"
+                type="button"
+                onclick="document.getElementById('photo-input').click()"
+              >
+                拍照
+              </button>
+            </div>
+          </div>
+        </section>
+        <input
+          type="file"
+          id="photo-input"
+          accept="image/*"
+          capture="environment"
+          onchange="handlePhotoSelected(this)"
+          hidden
+        />
+        <input
+          type="file"
+          id="album-input"
+          accept="image/*"
+          onchange="handlePhotoSelected(this)"
+          hidden
+        />
+      </main>
+
+      <!-- Screen C: 识别确认 -->
+      <main id="screen-confirm" class="screen">
+        <section class="confirm-summary">
+          <div class="row">
+            <button
+              class="btn-ghost"
+              type="button"
+              onclick="showScreen('camera')"
+            >
+              ← 重选
+            </button>
+            <div class="screen-title">确认克重</div>
+            <button
+              class="btn-ghost"
+              type="button"
+              onclick="saveCurrentRecord()"
+            >
+              保存
+            </button>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <span class="text-sm" style="color: var(--c-muted)">本餐合计</span>
+            <strong><span id="total-calories">0</span> kcal</strong>
+          </div>
+        </section>
+        <img
+          id="confirm-preview"
+          class="preview-image hidden"
+          alt="食物照片预览"
+        />
+        <div id="recognition-note" class="note-box hidden"></div>
+        <div id="food-cards"></div>
+        <button class="btn-solid" type="button" onclick="saveCurrentRecord()">
+          保存记录
+        </button>
+      </main>
+
+      <!-- Screen D: 历史记录 -->
+      <main id="screen-history" class="screen">
+        <div class="section-heading" style="margin-top: 0">
+          <div class="text-lg">历史记录</div>
+          <button class="btn-ghost" type="button" onclick="showScreen('home')">
+            返回首页
+          </button>
+        </div>
+        <div id="history-records"></div>
+      </main>
+
+      <div id="bottom-bar" class="bottom-bar">
+        <button class="btn-primary" type="button" onclick="showScreen('home')">
+          首页
+        </button>
+        <button
+          class="btn-primary"
+          type="button"
+          onclick="showScreen('history')"
+        >
+          历史
+        </button>
+      </div>
+    </div>
+
+    <!-- 全局弹层 -->
+    <div id="setup-modal" class="modal" aria-modal="true" role="dialog">
+      <div class="modal-card">
+        <h2>配置 API Key</h2>
+        <p>输入通义千问与薄荷开放平台配置</p>
+        <label for="qwen-key-input">Qwen API Key</label>
+        <input type="password" id="qwen-key-input" placeholder="sk-..." />
+        <label for="boohee-key-input">薄荷 X-Api-Key（推荐）</label>
+        <input
+          type="password"
+          id="boohee-key-input"
+          placeholder="用于 /v1/food/detail"
+        />
+        <div class="field-hint">
+          按薄荷文档，食物详情接口使用 Header: X-Api-Key。AI 识别到薄荷 food code 时会用薄荷热量覆盖估算值。
+        </div>
+        <label for="daily-goal-input">每日目标 kcal</label>
+        <input
+          type="number"
+          id="daily-goal-input"
+          min="800"
+          max="6000"
+          step="50"
+          value="2000"
+        />
+        <label for="daily-limit-input">每日摄入上限 kcal</label>
+        <input
+          type="number"
+          id="daily-limit-input"
+          min="800"
+          max="8000"
+          step="50"
+          value="2300"
+        />
+        <div class="modal-actions">
+          <button class="btn-ghost" type="button" onclick="closeSetupModal()">
+            稍后
+          </button>
+          <button
+            class="btn-ghost"
+            type="button"
+            onclick="startDemoFromSetup()"
+          >
+            体验演示
+          </button>
+          <button class="btn-primary" type="button" onclick="saveApiKeys()">
+            保存并开始
+          </button>
+        </div>
+        <p class="text-xs" style="margin-top: 8px; color: var(--c-hint)">
+          Key 保存在本地 localStorage，不会上传到任何服务器
+        </p>
+      </div>
+    </div>
+
+    <div id="loading-overlay">
+      <div class="loading-card">
+        <div class="spinner"></div>
+        <p id="loading-text">AI 正在识别食物...</p>
+        <p class="text-xs" style="color: var(--c-muted)">通常需要 2~4 秒</p>
+      </div>
+    </div>
+    <div id="toast-container"></div>
+
+    <script src="./env-config.js"></script>
+    <script>
+      const STORAGE_KEY = "calorie_records";
+      const QWEN_API_URL =
+        "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+      const BOOHEE_API_BASE = "https://api.boohee.com";
+      const DEFAULT_QWEN_MODEL = "qwen3-vl-flash";
+      const DEFAULT_DAILY_GOAL = 2000;
+      const DEFAULT_DAILY_LIMIT = 2300;
+
+      let foods = [];
+      let weights = [];
+      let aiWeights = [];
+      let currentImageDataUrl = null;
+      let currentResultNote = "";
+      let loadingTimer = null;
+
+      document.addEventListener("DOMContentLoaded", () => {
+        seedInputsFromStorage();
+        refreshHomeScreen();
+        refreshHistoryScreen();
+        if (!getApiKey("qwen_api_key")) openSetupModal(true);
+      });
+
+      function showScreen(name) {
+        document
+          .querySelectorAll(".screen")
+          .forEach((screen) => screen.classList.remove("active"));
+        document.getElementById(`screen-${name}`).classList.add("active");
+        const isFullFlow = name === "camera" || name === "confirm";
+        document
+          .getElementById("top-nav")
+          .classList.toggle("hidden", isFullFlow);
+        document
+          .getElementById("bottom-bar")
+          .classList.toggle("hidden", isFullFlow);
+        if (name === "home") refreshHomeScreen();
+        if (name === "history") refreshHistoryScreen();
+        window.scrollTo({ top: 0, behavior: "instant" });
+      }
+
+      function seedInputsFromStorage() {
+        document.getElementById("qwen-key-input").value =
+          getApiKey("qwen_api_key");
+        document.getElementById("boohee-key-input").value =
+          getApiKey("boohee_api_key");
+        document.getElementById("daily-goal-input").value = getDailyGoal();
+        document.getElementById("daily-limit-input").value = getDailyLimit();
+      }
+
+      function openSetupModal(required) {
+        seedInputsFromStorage();
+        document.getElementById("setup-modal").classList.add("show");
+        document.querySelector("#setup-modal .btn-ghost").style.display =
+          required ? "none" : "";
+      }
+
+      function closeSetupModal() {
+        document.getElementById("setup-modal").classList.remove("show");
+      }
+
+      function startDemoFromSetup() {
+        closeSetupModal();
+        runDemoRecognition();
+      }
+
+      function saveApiKeys() {
+        const qwen = document.getElementById("qwen-key-input").value.trim();
+        if (!qwen) return showError("Qwen API Key 不能为空");
+        localStorage.setItem("qwen_api_key", qwen);
+        const booheeKey = document
+          .getElementById("boohee-key-input")
+          .value.trim();
+        if (booheeKey) localStorage.setItem("boohee_api_key", booheeKey);
+        else localStorage.removeItem("boohee_api_key");
+        const dailyGoal =
+          Number(document.getElementById("daily-goal-input").value) ||
+          DEFAULT_DAILY_GOAL;
+        const dailyLimit =
+          Number(document.getElementById("daily-limit-input").value) ||
+          DEFAULT_DAILY_LIMIT;
+        const normalizedGoal = Math.max(800, Math.min(6000, dailyGoal));
+        const normalizedLimit = Math.max(
+          normalizedGoal,
+          Math.min(8000, dailyLimit),
+        );
+        localStorage.setItem(
+          "daily_goal",
+          String(normalizedGoal),
+        );
+        localStorage.setItem("daily_limit", String(normalizedLimit));
+        closeSetupModal();
+        showScreen("home");
+        showToast("配置已保存");
+      }
+
+      function getApiKey(name) {
+        const stored = localStorage.getItem(name);
+        if (stored) return stored;
+        const map = {
+          qwen_api_key: "QWEN_API_KEY",
+          boohee_api_key: "BOOHEE_API_KEY",
+        };
+        return getEnvValue(map[name]) || "";
+      }
+
+      function getDailyGoal() {
+        return (
+          Number(localStorage.getItem("daily_goal")) ||
+          Number(getEnvValue("DAILY_GOAL")) ||
+          DEFAULT_DAILY_GOAL
+        );
+      }
+
+      function getDailyLimit() {
+        const saved =
+          Number(localStorage.getItem("daily_limit")) ||
+          Number(getEnvValue("DAILY_LIMIT"));
+        return saved || Math.max(getDailyGoal(), DEFAULT_DAILY_LIMIT);
+      }
+
+      function getQwenModel() {
+        return getEnvValue("QWEN_MODEL") || DEFAULT_QWEN_MODEL;
+      }
+
+      function getQwenApiUrl() {
+        return getEnvValue("QWEN_API_URL") || QWEN_API_URL;
+      }
+
+      function getEnvValue(name) {
+        return (window.__CALORIE_MASTER_ENV__ || {})[name] || "";
+      }
+
+      async function handlePhotoSelected(input) {
+        const file = input.files && input.files[0];
+        input.value = "";
+        if (!file) return;
+        if (!file.type.startsWith("image/")) return showError("请选择图片文件");
+        try {
+          currentImageDataUrl = await compressImage(file);
+          await handleRecognition(currentImageDataUrl);
+        } catch (error) {
+          showError(error.message || "图片处理失败，请重试");
+        }
+      }
+
+      // 上传前将图片压缩到宽度 1024px 以内，减少 API 请求体积。
+      async function compressImage(file, maxWidth = 1024) {
+        return new Promise((resolve, reject) => {
+          const canvas = document.createElement("canvas");
+          const img = new Image();
+          img.onload = () => {
+            const scale = Math.min(1, maxWidth / img.width);
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            canvas
+              .getContext("2d")
+              .drawImage(img, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob(
+              (blob) => {
+                if (!blob) return reject(new Error("图片压缩失败"));
+                const reader = new FileReader();
+                reader.onload = (event) => resolve(event.target.result);
+                reader.onerror = () => reject(new Error("图片读取失败"));
+                reader.readAsDataURL(blob);
+              },
+              "image/jpeg",
+              0.85,
+            );
+            URL.revokeObjectURL(img.src);
+          };
+          img.onerror = () => reject(new Error("图片加载失败"));
+          img.src = URL.createObjectURL(file);
+        });
+      }
+
+      async function handleRecognition(imageBase64) {
+        if (!getApiKey("qwen_api_key")) {
+          openSetupModal(true);
+          showError("请先配置 Qwen API Key");
+          return;
+        }
+        showLoading();
+        try {
+          let result = await recognizeFood(imageBase64);
+          result = await enrichWithDatabase(result);
+          hideLoading();
+          renderConfirmScreen(result);
+        } catch (error) {
+          hideLoading();
+          const message = error.message || "";
+          if (message.includes("401")) showError("API Key 无效，请检查配置");
+          else if (message.includes("格式异常"))
+            showError("AI 返回异常，请重试");
+          else showError("网络错误，请检查连接后重试");
+        }
+      }
+
+      async function recognizeFood(imageBase64) {
+        const systemPrompt = `你是一个专业的营养分析助手，擅长从食物图片中准确识别食物种类并估算营养信息。
+
+当用户上传食物图片时，你需要：
+1. 识别图中所有可见食物
+2. 如果图中有参照物（手、筷子、碗、勺子等），利用参照物推算食物的实际尺寸和重量
+3. 估算每种食物的重量（克）
+4. 计算每种食物的热量
+
+参照物尺寸参考：
+- 成人手掌长 ≈ 18cm
+- 筷子长 ≈ 24cm
+- 标准碗口径 ≈ 14cm
+- 汤勺长 ≈ 5cm
+- 1元硬币直径 ≈ 2.5cm
+
+必须以合法 JSON 格式输出，结构如下：
+{
+  "foods": [
+    {
+      "name": "食物名称（中文）",
+      "weight_g": 估算克重（数字，单位克）,
+      "calories_per_100g": 每100g热量（数字，单位kcal）,
+      "total_calories": 该食物总热量（数字，单位kcal）,
+      "boohee_code": "如果你非常确定对应薄荷食物 code，可填入；不确定则留空字符串",
+      "confidence": "high 或 med 或 low"
+    }
+  ],
+  "total_calories": 所有食物热量之和（数字）,
+  "note": "补充说明，如不确定的食物、估算依据等，没有则留空字符串"
+}
+不要在 JSON 外面输出任何解释文字。`;
+
+        const response = await fetch(getQwenApiUrl(), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${getApiKey("qwen_api_key")}`,
+          },
+          body: JSON.stringify({
+            model: getQwenModel(),
+            messages: [
+              { role: "system", content: systemPrompt },
+              {
+                role: "user",
+                content: [
+                  { type: "image_url", image_url: { url: imageBase64 } },
+                  {
+                    type: "text",
+                    text: "请分析这张食物图片，识别所有食物并估算热量。",
+                  },
+                ],
+              },
+            ],
+            response_format: { type: "json_object" },
+          }),
+        });
+
+        if (!response.ok) throw new Error(String(response.status));
+        const data = await response.json();
+        const content = data.choices?.[0]?.message?.content;
+        if (!content) throw new Error("AI 返回格式异常");
+        try {
+          return normalizeAiResult(JSON.parse(content));
+        } catch (error) {
+          const match = String(content).match(/\{[\s\S]*\}/);
+          if (match) return normalizeAiResult(JSON.parse(match[0]));
+          throw new Error("AI 返回格式异常");
+        }
+      }
+
+      function normalizeAiResult(result) {
+        const normalizedFoods = Array.isArray(result.foods)
+          ? result.foods.map((food) => {
+              const weight = clamp(Number(food.weight_g) || 100, 10, 1000);
+              const caloriesPer100g = Math.max(
+                0,
+                Number(food.calories_per_100g) || 0,
+              );
+              return {
+                name: String(food.name || "未知食物"),
+                weight_g: weight,
+                calories_per_100g: caloriesPer100g,
+                total_calories: Math.round((caloriesPer100g * weight) / 100),
+                boohee_code: String(food.boohee_code || food.code || ""),
+                confidence: ["high", "med", "low"].includes(food.confidence)
+                  ? food.confidence
+                  : "med",
+                cal_source: food.cal_source || "ai_estimate",
+                protein_per_100g: Number(food.protein_per_100g) || null,
+                fat_per_100g: Number(food.fat_per_100g) || null,
+                carbohydrate_per_100g:
+                  Number(food.carbohydrate_per_100g) || null,
+                health_light: Number(food.health_light) || 0,
+              };
+            })
+          : [];
+        if (!normalizedFoods.length) throw new Error("AI 返回格式异常");
+        return {
+          foods: normalizedFoods,
+          total_calories: normalizedFoods.reduce(
+            (sum, food) => sum + food.total_calories,
+            0,
+          ),
+          note: String(result.note || ""),
+        };
+      }
+
+      function getBooheeHeaders() {
+        const headers = { "Content-Type": "application/json" };
+        const apiKey = getApiKey("boohee_api_key");
+        if (apiKey) headers["X-Api-Key"] = apiKey;
+        return headers;
+      }
+
+      function parseBooheeNutrition(data, fallbackName) {
+        const source = data?.data || data?.food || data;
+        if (!source || typeof source !== "object") return null;
+        const calories =
+          Number(source.calories?.value) ||
+          Number(source.calory) ||
+          Number(
+            Array.isArray(source.calory)
+              ? source.calory.find((item) => item.name_en === "total_calory")
+                  ?.value
+              : 0,
+          );
+        if (!calories) return null;
+        return {
+          name: source.name || source.food?.name || fallbackName,
+          code: source.code || source.food?.code || "",
+          calories_per_100g: calories,
+          protein_per_100g:
+            Number(source.protein?.value) || findIngredient(source, "protein"),
+          fat_per_100g: Number(source.fat?.value) || findIngredient(source, "fat"),
+          carbohydrate_per_100g:
+            Number(source.carbohydrate?.value) ||
+            findIngredient(source, "carbohydrate"),
+          health_light: Number(source.health_light) || 0,
+          image_url:
+            source.image_url ||
+            source.thumb_image_url ||
+            source.thumb_img_url ||
+            source.food?.thumb_image_url ||
+            "",
+          source: "boohee",
+        };
+      }
+
+      function findIngredient(source, key) {
+        const groups = [
+          source.ingredients,
+          source.base_ingredients,
+          source.vitamin,
+          source.mineral,
+          source.other_ingredients,
+        ].filter(Array.isArray);
+        for (const group of groups) {
+          const item = group.find(
+            (entry) => entry.key === key || entry.name_en === key,
+          );
+          if (item && Number(item.value)) return Number(item.value);
+        }
+        return null;
+      }
+
+      async function queryBooheeDetail(code, fallbackName) {
+        const apiKey = getApiKey("boohee_api_key");
+        if (!code || !apiKey) return null;
+        const url = `${BOOHEE_API_BASE}/v1/food/detail?code=${encodeURIComponent(code)}&with_units=true&with_materials=true`;
+        try {
+          const response = await fetch(url, { headers: getBooheeHeaders() });
+          const data = await response.json();
+          if (data.code === 0 || data.data || data.food) {
+            return parseBooheeNutrition(data, fallbackName);
+          }
+        } catch (error) {
+          // 薄荷详情是增强能力，失败时继续使用 AI 估算值。
+        }
+        return null;
+      }
+
+      async function queryNutrition(food) {
+        return queryBooheeDetail(
+          food.boohee_code || food.code,
+          food.name,
+        );
+      }
+
+      async function enrichWithDatabase(aiResult) {
+        const enriched = await Promise.all(
+          aiResult.foods.map(async (food) => {
+            const dbData = await queryNutrition(food);
+            if (dbData?.calories_per_100g) {
+              return {
+                ...food,
+                name: dbData.name || food.name,
+                boohee_code: dbData.code || food.boohee_code,
+                calories_per_100g: dbData.calories_per_100g,
+                total_calories: Math.round(
+                  (dbData.calories_per_100g * food.weight_g) / 100,
+                ),
+                protein_per_100g: dbData.protein_per_100g,
+                fat_per_100g: dbData.fat_per_100g,
+                carbohydrate_per_100g: dbData.carbohydrate_per_100g,
+                health_light: dbData.health_light,
+                food_image_url: dbData.image_url,
+                cal_source: "boohee",
+              };
+            }
+            return { ...food, cal_source: "ai_estimate" };
+          }),
+        );
+        return {
+          ...aiResult,
+          foods: enriched,
+          total_calories: enriched.reduce(
+            (sum, food) => sum + food.total_calories,
+            0,
+          ),
+        };
+      }
+
+      function renderConfirmScreen(result) {
+        initConfirmState(result);
+        const preview = document.getElementById("confirm-preview");
+        preview.classList.toggle("hidden", !currentImageDataUrl);
+        if (currentImageDataUrl) preview.src = currentImageDataUrl;
+        currentResultNote = result.note || "";
+        const note = document.getElementById("recognition-note");
+        note.textContent = currentResultNote;
+        note.classList.toggle("hidden", !currentResultNote);
+        showScreen("confirm");
+      }
+
+      function initConfirmState(aiResult) {
+        foods = aiResult.foods;
+        weights = foods.map((food) => food.weight_g);
+        aiWeights = [...weights];
+        renderAllCards();
+        updateTotal();
+      }
+
+      function renderAllCards() {
+        const container = document.getElementById("food-cards");
+        container.innerHTML = foods
+          .map((food, index) => {
+            const confidenceText =
+              { high: "高置信", med: "中置信", low: "低置信" }[
+                food.confidence
+              ] || "中置信";
+            const sourceText =
+              food.cal_source === "boohee" ? "薄荷数据" : "AI 估算";
+            const lightText =
+              { 1: "绿灯", 2: "黄灯", 3: "红灯" }[food.health_light] ||
+              "无红绿灯";
+            const macroChips = [
+              formatMacro("蛋白", food.protein_per_100g),
+              formatMacro("脂肪", food.fat_per_100g),
+              formatMacro("碳水", food.carbohydrate_per_100g),
+            ]
+              .filter(Boolean)
+              .join("");
+            return `
+          <div class="card food-card" data-index="${index}">
+            <div class="food-header">
+              <span class="food-name">${escapeHtml(food.name)}</span>
+              <span class="badge badge-${food.confidence}">${confidenceText}</span>
+              <span class="calories"><span class="cal-num">${food.total_calories}</span> kcal</span>
+            </div>
+            <div class="food-meta">
+              <span class="meta-chip ${food.cal_source === "boohee" ? "source-boohee" : ""}">${sourceText} · ${Math.round(food.calories_per_100g)} kcal/100g</span>
+              <span class="meta-chip light-${food.health_light || 0}">${lightText}</span>
+              ${macroChips}
+            </div>
+            <div class="adjust-tabs">
+              <button class="btn-ghost adjust-tab active" type="button" onclick="setAdjustMode(${index}, 'slider')">滑块</button>
+              <button class="btn-ghost adjust-tab" type="button" onclick="setAdjustMode(${index}, 'stepper')">步进</button>
+              <button class="btn-ghost adjust-tab" type="button" onclick="setAdjustMode(${index}, 'input')">输入</button>
+            </div>
+            <div class="adjust-pane adjust-slider">
+              <input type="range" min="30" max="400" step="10" value="${food.weight_g}" oninput="onSliderChange(${index}, this.value)">
+              <div class="slider-footer">
+                <span class="ai-ref">AI 估算 ${food.weight_g}g · ${sourceText}</span>
+                <span class="weight-display">${food.weight_g}g</span>
+              </div>
+            </div>
+            <div class="adjust-pane adjust-stepper hidden">
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, -50)">-50g</button>
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, -10)">-10g</button>
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, -5)">-5g</button>
+              <span class="step-weight-display">${food.weight_g}g</span>
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, 5)">+5g</button>
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, 10)">+10g</button>
+              <button class="btn-ghost" type="button" onclick="stepWeight(${index}, 50)">+50g</button>
+            </div>
+            <div class="adjust-pane adjust-input hidden">
+              <input type="number" min="10" max="1000" value="${food.weight_g}" oninput="onInputChange(${index}, this.value)">
+              <span>克</span>
+            </div>
+            <div class="portion-presets">
+              <button class="btn-ghost" type="button" onclick="setPreset(${index}, 0.5)">半份</button>
+              <button class="btn-ghost active" type="button" onclick="setPreset(${index}, 1)">正常份</button>
+              <button class="btn-ghost" type="button" onclick="setPreset(${index}, 1.5)">大份</button>
+              <button class="btn-ghost" type="button" onclick="setPreset(${index}, 2)">双份</button>
+            </div>
+            <div class="diff-indicator diff-same" id="diff-${index}">与 AI 估算一致</div>
+          </div>`;
+          })
+          .join("");
+      }
+
+      function formatMacro(label, value) {
+        return Number(value)
+          ? `<span class="meta-chip">${label} ${Number(value).toFixed(1)}g/100g</span>`
+          : "";
+      }
+
+      function setAdjustMode(index, mode) {
+        const card = document.querySelector(`[data-index="${index}"]`);
+        card
+          .querySelectorAll(".adjust-tab")
+          .forEach((tab) => tab.classList.remove("active"));
+        card
+          .querySelectorAll(".adjust-pane")
+          .forEach((pane) => pane.classList.add("hidden"));
+        const modeIndex = { slider: 0, stepper: 1, input: 2 }[mode];
+        card.querySelectorAll(".adjust-tab")[modeIndex].classList.add("active");
+        card.querySelector(`.adjust-${mode}`).classList.remove("hidden");
+      }
+
+      function onSliderChange(index, value) {
+        updateWeight(index, value);
+      }
+
+      function onInputChange(index, value) {
+        updateWeight(index, value);
+      }
+
+      function stepWeight(index, delta) {
+        updateWeight(index, weights[index] + delta);
+      }
+
+      function setPreset(index, multiplier) {
+        const card = document.querySelector(`[data-index="${index}"]`);
+        card
+          .querySelectorAll(".portion-presets button")
+          .forEach((button) => button.classList.remove("active"));
+        const presetIndex = { 0.5: 0, 1: 1, 1.5: 2, 2: 3 }[multiplier];
+        card
+          .querySelectorAll(".portion-presets button")
+          [presetIndex].classList.add("active");
+        updateWeight(index, aiWeights[index] * multiplier);
+      }
+
+      function updateWeight(index, newWeight) {
+        newWeight = clamp(Math.round(Number(newWeight) || 10), 10, 1000);
+        weights[index] = newWeight;
+        const cal = Math.round(
+          (foods[index].calories_per_100g * newWeight) / 100,
+        );
+        const card = document.querySelector(`[data-index="${index}"]`);
+        card.querySelector(".cal-num").textContent = cal;
+        syncWeightDisplay(index, newWeight);
+        updateDiffChip(index);
+        updateTotal();
+      }
+
+      function syncWeightDisplay(index, newWeight) {
+        const card = document.querySelector(`[data-index="${index}"]`);
+        card.querySelector(".weight-display").textContent = `${newWeight}g`;
+        card.querySelector(".step-weight-display").textContent =
+          `${newWeight}g`;
+        card.querySelector('input[type="range"]').value = clamp(
+          newWeight,
+          30,
+          400,
+        );
+        card.querySelector('input[type="number"]').value = newWeight;
+      }
+
+      function updateDiffChip(index) {
+        const diff = weights[index] - aiWeights[index];
+        const el = document.getElementById(`diff-${index}`);
+        if (Math.abs(diff) < 5) {
+          el.textContent = "与 AI 估算一致";
+          el.className = "diff-indicator diff-same";
+        } else {
+          const sign = diff > 0 ? "+" : "";
+          el.textContent = `${sign}${diff}g（AI 估算 ${aiWeights[index]}g）`;
+          el.className = `diff-indicator ${diff > 0 ? "diff-up" : "diff-down"}`;
+        }
+      }
+
+      function updateTotal() {
+        const total = weights.reduce((sum, weight, index) => {
+          return (
+            sum + Math.round((foods[index].calories_per_100g * weight) / 100)
+          );
+        }, 0);
+        document.getElementById("total-calories").textContent = total;
+      }
+
+      function saveCurrentRecord() {
+        if (!foods.length) return showError("没有可保存的识别结果");
+        saveRecord(foods, currentImageDataUrl);
+        foods = [];
+        weights = [];
+        aiWeights = [];
+        currentImageDataUrl = null;
+        showToast("已保存到今日记录");
+        showScreen("home");
+      }
+
+      function loadRecords() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        try {
+          return raw ? JSON.parse(raw) : [];
+        } catch (error) {
+          return [];
+        }
+      }
+
+      function saveRecord(foodList, imageDataUrl = null) {
+        const records = loadRecords();
+        const now = Date.now();
+        const recordFoods = foodList.map((food, index) => ({
+          ...food,
+          weight_g: weights[index],
+          total_calories: Math.round(
+            (food.calories_per_100g * weights[index]) / 100,
+          ),
+        }));
+        const record = {
+          id: `${now}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: now,
+          mealType: getMealType(now),
+          foods: recordFoods,
+          totalCalories: recordFoods.reduce(
+            (sum, food) => sum + food.total_calories,
+            0,
+          ),
+          imageDataUrl,
+        };
+        records.push(record);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        return record;
+      }
+
+      function deleteRecord(id) {
+        const records = loadRecords().filter((record) => record.id !== id);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        refreshHomeScreen();
+        refreshHistoryScreen();
+        showToast("记录已删除");
+      }
+
+      function getMealType(timestamp) {
+        const hour = new Date(timestamp).getHours();
+        if (hour >= 5 && hour < 10) return "早餐";
+        if (hour >= 10 && hour < 14) return "午餐";
+        if (hour >= 14 && hour < 17) return "下午茶";
+        if (hour >= 17 && hour < 21) return "晚餐";
+        return "加餐";
+      }
+
+      function getDayRecords(date) {
+        const start = new Date(date).setHours(0, 0, 0, 0);
+        const end = new Date(date).setHours(23, 59, 59, 999);
+        return loadRecords().filter(
+          (record) => record.timestamp >= start && record.timestamp <= end,
+        );
+      }
+
+      function getDayTotal(date) {
+        return getDayRecords(date).reduce(
+          (sum, record) => sum + record.totalCalories,
+          0,
+        );
+      }
+
+      function isToday(timestamp) {
+        const d = new Date(timestamp);
+        const t = new Date();
+        return (
+          d.getFullYear() === t.getFullYear() &&
+          d.getMonth() === t.getMonth() &&
+          d.getDate() === t.getDate()
+        );
+      }
+
+      function refreshHomeScreen() {
+        const dailyGoal = getDailyGoal();
+        const dailyLimit = getDailyLimit();
+        const todayRecords = loadRecords().filter((record) =>
+          isToday(record.timestamp),
+        );
+        const todayTotal = todayRecords.reduce(
+          (sum, record) => sum + record.totalCalories,
+          0,
+        );
+        const pct = Math.min(100, Math.round((todayTotal / dailyLimit) * 100));
+        const goalPct = Math.round((todayTotal / dailyGoal) * 100);
+        const fill = document.getElementById("goal-progress");
+        fill.style.width = `${pct}%`;
+        fill.style.background =
+          todayTotal < dailyGoal * 0.85
+            ? "var(--c-green)"
+            : todayTotal <= dailyLimit
+              ? "var(--c-amber)"
+              : "var(--c-red)";
+        const hero = document.querySelector(".hero-total");
+        hero.classList.toggle("hero-warn", todayTotal >= dailyGoal * 0.85);
+        hero.classList.toggle("hero-over", todayTotal > dailyLimit);
+        document.getElementById("today-total").textContent = todayTotal;
+        document.getElementById("goal-label").textContent =
+          `/ 上限 ${dailyLimit} kcal`;
+        document.getElementById("goal-stat").textContent = dailyGoal;
+        document.getElementById("limit-stat").textContent = dailyLimit;
+        const remaining = dailyLimit - todayTotal;
+        document.getElementById("remaining-stat").textContent =
+          remaining >= 0 ? remaining : `+${Math.abs(remaining)}`;
+        document.getElementById("goal-pct-label").textContent = `${goalPct}%`;
+        document.getElementById("intake-status").textContent =
+          todayTotal > dailyLimit
+            ? `已超过上限 ${todayTotal - dailyLimit} kcal`
+            : todayTotal >= dailyGoal
+              ? `已达目标，距上限还剩 ${dailyLimit - todayTotal} kcal`
+              : `距目标还差 ${dailyGoal - todayTotal} kcal`;
+        renderRecords(
+          document.getElementById("today-records"),
+          todayRecords,
+          true,
+        );
+        renderTrendChart();
+      }
+
+      function refreshHistoryScreen() {
+        const records = loadRecords()
+          .slice()
+          .sort((a, b) => b.timestamp - a.timestamp);
+        renderRecords(
+          document.getElementById("history-records"),
+          records,
+          false,
+        );
+      }
+
+      function renderRecords(container, records, todayOnly) {
+        if (!records.length) {
+          container.innerHTML = `<div class="empty">${todayOnly ? "今天还没有记录，拍一餐试试" : "暂无历史记录"}</div>`;
+          return;
+        }
+        const sorted = records
+          .slice()
+          .sort((a, b) => b.timestamp - a.timestamp);
+        container.innerHTML = sorted
+          .map((record) => {
+            const time = new Date(record.timestamp).toLocaleTimeString(
+              "zh-CN",
+              { hour: "2-digit", minute: "2-digit" },
+            );
+            const date = new Date(record.timestamp).toLocaleDateString(
+              "zh-CN",
+              { month: "numeric", day: "numeric" },
+            );
+            const foodsText = record.foods
+              .map((food) => `${food.name} ${food.weight_g}g`)
+              .join(" · ");
+            const thumbUrl =
+              record.imageDataUrl ||
+              record.foods.find((food) => food.food_image_url)?.food_image_url;
+            const thumb = thumbUrl
+              ? `<img class="thumb" src="${thumbUrl}" alt="${escapeHtml(record.mealType)}缩略图">`
+              : `<div class="thumb">🍽</div>`;
+            return `
+          <article class="card record-card" data-record-id="${record.id}" oncontextmenu="handleRecordContextMenu(event, '${record.id}')">
+            ${thumb}
+            <div>
+              <div class="record-title"><span>${time}</span><span>${escapeHtml(record.mealType)}</span></div>
+              <div class="record-foods">${escapeHtml(foodsText)}</div>
+              ${todayOnly ? "" : `<div class="history-date">${date}</div>`}
+            </div>
+            <div>
+              <div class="record-cal">${record.totalCalories}</div>
+              <button class="btn-ghost" type="button" onclick="deleteRecord('${record.id}')">删除</button>
+            </div>
+          </article>`;
+          })
+          .join("");
+        installSwipeDelete(container);
+      }
+
+      function handleRecordContextMenu(event, id) {
+        event.preventDefault();
+        if (confirm("删除这条记录？")) deleteRecord(id);
+      }
+
+      function installSwipeDelete(container) {
+        container.querySelectorAll(".record-card").forEach((card) => {
+          let startX = 0;
+          let currentX = 0;
+          card.addEventListener(
+            "touchstart",
+            (event) => {
+              startX = event.touches[0].clientX;
+              currentX = startX;
+            },
+            { passive: true },
+          );
+          card.addEventListener(
+            "touchmove",
+            (event) => {
+              currentX = event.touches[0].clientX;
+              const diff = Math.min(0, Math.max(-88, currentX - startX));
+              card.style.transform = `translateX(${diff}px)`;
+            },
+            { passive: true },
+          );
+          card.addEventListener("touchend", () => {
+            const diff = currentX - startX;
+            card.style.transform = "";
+            if (diff < -72 && confirm("删除这条记录？"))
+              deleteRecord(card.dataset.recordId);
+          });
+        });
+      }
+
+      function getLast7Days() {
+        return Array.from({ length: 7 }, (_, index) => {
+          const date = new Date();
+          date.setDate(date.getDate() - (6 - index));
+          date.setHours(0, 0, 0, 0);
+          return date;
+        });
+      }
+
+      function renderTrendChart() {
+        const dailyGoal = getDailyGoal();
+        const dailyLimit = getDailyLimit();
+        const weekData = getLast7Days().map((date) => ({
+          label: `${date.getMonth() + 1}/${date.getDate()}`,
+          calories: getDayTotal(date),
+          isToday: isToday(date),
+        }));
+        const maxValue = Math.max(
+          dailyLimit,
+          ...weekData.map((item) => item.calories),
+          1,
+        );
+        const width = 420;
+        const height = 120;
+        const padding = 22;
+        const gap = 10;
+        const chartHeight = 72;
+        const barWidth = (width - padding * 2) / 7 - gap;
+        const goalY =
+          padding + chartHeight - (dailyGoal / maxValue) * chartHeight;
+        const limitY =
+          padding + chartHeight - (dailyLimit / maxValue) * chartHeight;
+        const bars = weekData
+          .map((item, index) => {
+            const x = padding + index * ((width - padding * 2) / 7) + gap / 2;
+            const barHeight = Math.max(
+              2,
+              (item.calories / maxValue) * chartHeight,
+            );
+            const y = padding + chartHeight - barHeight;
+            const color = item.isToday ? "var(--c-green)" : "var(--c-muted)";
+            const cap =
+              item.calories > dailyLimit
+                ? `<circle cx="${x + barWidth / 2}" cy="${y - 5}" r="3" fill="var(--c-red)" />`
+                : "";
+            return `
+          <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="5" fill="${color}" opacity="${item.isToday ? 1 : 0.45}"></rect>
+          ${cap}
+          <text x="${x + barWidth / 2}" y="112" text-anchor="middle" font-size="10" fill="var(--c-muted)">${item.label}</text>`;
+          })
+          .join("");
+        document.getElementById("trend-max-label").textContent =
+          `最高刻度 ${Math.round(maxValue)} kcal`;
+        document.getElementById("trend-chart").innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近 7 日热量趋势图">
+          <line x1="${padding}" x2="${width - padding}" y1="${goalY}" y2="${goalY}" stroke="var(--c-amber)" stroke-dasharray="4 4" opacity=".7"></line>
+          <text x="${width - padding}" y="${Math.max(10, goalY - 5)}" text-anchor="end" font-size="10" fill="var(--c-amber)">目标</text>
+          <line x1="${padding}" x2="${width - padding}" y1="${limitY}" y2="${limitY}" stroke="var(--c-red)" stroke-dasharray="2 5" opacity=".72"></line>
+          <text x="${padding}" y="${Math.max(10, limitY - 5)}" text-anchor="start" font-size="10" fill="var(--c-red)">上限</text>
+          ${bars}
+        </svg>`;
+      }
+
+      function showLoading() {
+        const overlay = document.getElementById("loading-overlay");
+        const text = document.getElementById("loading-text");
+        const startedAt = Date.now();
+        overlay.classList.add("show");
+        clearInterval(loadingTimer);
+        loadingTimer = setInterval(() => {
+          const elapsed = Date.now() - startedAt;
+          if (elapsed < 1000) text.textContent = "AI 正在识别食物...";
+          else if (elapsed < 2500) text.textContent = "正在估算克重和热量...";
+          else text.textContent = "正在查询营养数据库...";
+        }, 200);
+      }
+
+      function hideLoading() {
+        clearInterval(loadingTimer);
+        document.getElementById("loading-overlay").classList.remove("show");
+      }
+
+      function showError(message) {
+        showToast(message, true);
+      }
+
+      function showToast(message, error = false) {
+        const toast = document.createElement("div");
+        toast.className = `toast ${error ? "toast-error" : ""}`;
+        toast.textContent = message;
+        document.getElementById("toast-container").appendChild(toast);
+        setTimeout(() => toast.remove(), 3000);
+      }
+
+      function runDemoRecognition() {
+        currentImageDataUrl = null;
+        const demo = {
+          foods: [
+            {
+              name: "白米饭",
+              weight_g: 150,
+              calories_per_100g: 116,
+              total_calories: 174,
+              confidence: "high",
+            },
+            {
+              name: "红烧肉",
+              weight_g: 120,
+              calories_per_100g: 478,
+              total_calories: 574,
+              confidence: "med",
+            },
+            {
+              name: "清炒青菜",
+              weight_g: 90,
+              calories_per_100g: 45,
+              total_calories: 41,
+              confidence: "high",
+            },
+          ],
+          total_calories: 789,
+          note: "演示数据用于体验克重调整和保存流程，未调用真实 API。",
+        };
+        renderConfirmScreen(normalizeAiResult(demo));
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+    </script>
+  </body>
+</html>
