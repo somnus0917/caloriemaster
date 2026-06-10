@@ -8,16 +8,17 @@ interface SetupModalProps {
   onSave: (next: Partial<Settings>) => void;
   onClose: () => void;
   onDemo: () => void;
+  onLogout: () => void;
 }
 
 /**
- * Settings modal — goal / limit only.
+ * Settings modal — goal / limit + account actions.
  *
  * API keys are no longer entered here. They live in `.env` on the server
  * and are injected into Qwen / 薄荷 requests by the /api/* proxy. The
  * browser never sees the raw keys.
  */
-export function SetupModal({ open, settings, onSave, onClose, onDemo }: SetupModalProps) {
+export function SetupModal({ open, settings, onSave, onClose, onDemo, onLogout }: SetupModalProps) {
   const [goal, setGoal] = useState(settings.dailyGoal);
   const [limit, setLimit] = useState(settings.dailyLimit);
 
@@ -75,6 +76,12 @@ export function SetupModal({ open, settings, onSave, onClose, onDemo }: SetupMod
         </button>
         <button className="btn-primary" type="button" onClick={handleSave}>
           保存
+        </button>
+      </div>
+
+      <div className="modal-actions" style={{ marginTop: 8, justifyContent: "flex-start" }}>
+        <button className="btn-ghost btn-sm" type="button" onClick={onLogout}>
+          退出登录
         </button>
       </div>
     </Modal>

@@ -1,25 +1,17 @@
 import { useCallback, useRef, useState } from "react";
 import type { RecognitionResult, Record } from "../types";
 import { enrichWithDatabase } from "../services/boohee";
-import { recognizeFood } from "../services/qwen";
+import { recognizeFood, type RecognizeOutcome } from "../services/qwen";
 import { DEMO_RECOGNITION } from "../data/demoData";
 import { normalizeAiResult } from "../services/qwen";
 
-/**
- * Phases of the recognition pipeline. Kept as a small union so the UI
- * can show different copy and so we can reject duplicate submissions.
- */
 export type RecognitionStatus = "idle" | "recognizing" | "enriching";
+export type RecognitionFailureReason = "no_food" | "error" | null;
 
 export interface RecognitionState {
   result: RecognitionResult;
   weights: number[];
   aiWeights: number[];
-  /**
-   * The compressed (1024px) image is held in memory ONLY while the
-   * user is on the camera/confirm screen. It MUST NOT be passed into
-   * `addRecord` — `addRecord` only accepts the small thumbnail.
-   */
   imageDataUrl: string | null;
   thumbnailUrl: string | null;
   note: string;
@@ -27,14 +19,21 @@ export interface RecognitionState {
 
 export interface UseRecognitionFlowOptions {
   onError: (message: string) => void;
+  onNoFood?: () => void;
 }
 
 export interface UseRecognitionFlowReturn {
   recognition: RecognitionState | null;
   editingId: string | null;
   status: RecognitionStatus;
+  failureReason: RecognitionFailureReason;
   isBusy: boolean;
-  startRecognition: (imageBase64: string, thumbnail: string | null) => Promise<void>;
+  /**
+   * Run the recognition pipeline for a new image. Returns true on
+   * success (recognition state is populated), false on failure.
+   * In the failure case the caller should stay on the camera page.
+   */
+  startRecognition: (imageBase64: string, thumbnail: string | null) => Promise<boolean>;
   loadDemo: () => void;
   beginEdit: (record: Record) => void;
   changeWeight: (index: number, weight: number) => void;
@@ -42,25 +41,14 @@ export interface UseRecognitionFlowReturn {
   setStatus: (status: RecognitionStatus) => void;
 }
 
-/**
- * Owns the recognition-related state machine: a transient
- * `RecognitionState` plus a `RecognitionStatus` that mirrors the
- * current phase of the pipeline.
- *
- * IMPORTANT: the full 1024px image (`imageDataUrl`) is held inside
- * this hook and dropped via `reset()`. `thumbnailUrl` is the only
- * image that may leave this hook (through `beginEdit` / `loadDemo`
- * returning a snapshot that the caller can persist). The full
- * recognition image is never persisted.
- */
 export function useRecognitionFlow({
   onError,
+  onNoFood,
 }: UseRecognitionFlowOptions): UseRecognitionFlowReturn {
   const [recognition, setRecognition] = useState<RecognitionState | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [status, setStatus] = useState<RecognitionStatus>("idle");
-  // Ref mirrors status so `startRecognition` can early-out if a previous
-  // call is still in flight, even before React re-renders.
+  const [failureReason, setFailureReason] = useState<RecognitionFailureReason>(null);
   const statusRef = useRef<RecognitionStatus>("idle");
   statusRef.current = status;
 
@@ -70,23 +58,41 @@ export function useRecognitionFlow({
     setRecognition(null);
     setEditingId(null);
     setStatus("idle");
+    setFailureReason(null);
     statusRef.current = "idle";
   }, []);
 
   const startRecognition = useCallback(
-    async (imageBase64: string, thumbnail: string | null) => {
+    async (imageBase64: string, thumbnail: string | null): Promise<boolean> => {
       if (statusRef.current !== "idle") {
-        // Drop the in-memory image so we don't keep a 1024px base64
-        // blob around if the user spam-taps the camera button.
-        return;
+        return false;
       }
       setStatus("recognizing");
+      setFailureReason(null);
       statusRef.current = "recognizing";
+      let outcome: RecognizeOutcome;
       try {
-        const aiResult = await recognizeFood({ imageBase64 });
-        setStatus("enriching");
-        statusRef.current = "enriching";
-        const enriched = await enrichWithDatabase(aiResult);
+        outcome = await recognizeFood({ imageBase64 });
+      } catch (err) {
+        // Should not reach here because recognizeFood already converts
+        // to an outcome, but keep the safety net.
+        outcome = { ok: false, reason: "error", message: (err as Error).message };
+      }
+      if (!outcome.ok) {
+        setStatus("idle");
+        setFailureReason(outcome.reason);
+        statusRef.current = "idle";
+        if (outcome.reason === "no_food") {
+          onNoFood?.();
+        } else {
+          onError(outcome.message ?? "识别失败，请重试");
+        }
+        return false;
+      }
+      setStatus("enriching");
+      statusRef.current = "enriching";
+      try {
+        const enriched = await enrichWithDatabase(outcome.result);
         setRecognition({
           result: enriched,
           weights: enriched.foods.map((f) => f.weight_g),
@@ -96,14 +102,18 @@ export function useRecognitionFlow({
           note: enriched.note || "",
         });
         setEditingId(null);
-      } catch (error) {
-        onError((error as Error).message || "识别失败，请重试");
-      } finally {
+      } catch (err) {
         setStatus("idle");
+        setFailureReason("error");
         statusRef.current = "idle";
+        onError((err as Error).message || "营养数据获取失败");
+        return false;
       }
+      setStatus("idle");
+      statusRef.current = "idle";
+      return true;
     },
-    [onError],
+    [onError, onNoFood],
   );
 
   const loadDemo = useCallback(() => {
@@ -111,8 +121,8 @@ export function useRecognitionFlow({
     const normalized = normalizeAiResult(DEMO_RECOGNITION);
     setRecognition({
       result: normalized,
-      weights: normalized.foods.map((f) => f.weight_g),
-      aiWeights: normalized.foods.map((f) => f.weight_g),
+      weights: normalized.foods.map((f: { weight_g: number }) => f.weight_g),
+      aiWeights: normalized.foods.map((f: { weight_g: number }) => f.weight_g),
       imageDataUrl: null,
       thumbnailUrl: null,
       note: normalized.note || "演示数据用于体验克重调整和保存流程，未调用真实 API。",
@@ -129,8 +139,8 @@ export function useRecognitionFlow({
         total_calories: record.totalCalories,
         note: editNote,
       },
-      weights: record.foods.map((f) => f.weight_g),
-      aiWeights: record.foods.map((f) => f.weight_g),
+      weights: record.foods.map((f: { weight_g: number }) => f.weight_g),
+      aiWeights: record.foods.map((f: { weight_g: number }) => f.weight_g),
       imageDataUrl: null,
       thumbnailUrl: record.thumbnailUrl,
       note: editNote,
@@ -152,6 +162,7 @@ export function useRecognitionFlow({
     recognition,
     editingId,
     status,
+    failureReason,
     isBusy,
     startRecognition,
     loadDemo,

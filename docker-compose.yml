@@ -1,0 +1,59 @@
+# Local development / single-host deployment.
+# Use `docker compose up --build` to start.
+#
+# Production notes:
+#   - The app is exposed on port 3000; put a reverse proxy in front of it.
+#   - Set APP_ORIGIN to the externally-visible origin (https://...).
+#   - TRUST_PROXY=true so Fastify honours X-Forwarded-* from your proxy.
+#   - The Postgres data is persisted in the named volume `pg_data`.
+#
+# Tests: see README → "Running server tests".
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: caloriemaster-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-caloriemaster}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-caloriemaster}
+      POSTGRES_DB: ${POSTGRES_DB:-caloriemaster}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-caloriemaster} -d ${POSTGRES_DB:-caloriemaster}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  app:
+    build: .
+    container_name: caloriemaster-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-caloriemaster}:${POSTGRES_PASSWORD:-caloriemaster}@postgres:5432/${POSTGRES_DB:-caloriemaster}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      SESSION_COOKIE_NAME: caloriemaster_session
+      SESSION_TTL_DAYS: 30
+      QWEN_API_KEY: ${QWEN_API_KEY}
+      QWEN_MODEL: ${QWEN_MODEL:-qwen3-vl-flash}
+      QWEN_API_URL: ${QWEN_API_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions}
+      BOOHEE_API_KEY: ${BOOHEE_API_KEY}
+      BOOHEE_API_URL: ${BOOHEE_API_URL:-https://api.boohee.com}
+      AI_RATE_LIMIT_PER_MINUTE: ${AI_RATE_LIMIT_PER_MINUTE:-5}
+      AI_DAILY_QUOTA: ${AI_DAILY_QUOTA:-100}
+      AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-10}
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+volumes:
+  pg_data:

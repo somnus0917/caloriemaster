@@ -76,8 +76,9 @@ describe("parseAiContent", () => {
 });
 
 describe("normalizeAiResult", () => {
-  it("rejects an empty foods array", () => {
-    expect(() => normalizeAiResult({ foods: [] })).toThrow();
+  it("accepts an empty foods array (the caller treats it as no-food)", () => {
+    const result = normalizeAiResult({ foods: [] });
+    expect(result.foods).toHaveLength(0);
   });
 
   it("rejects non-object input", () => {

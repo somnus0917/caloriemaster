@@ -1,176 +1,395 @@
-# 卡路里追踪
+# 卡路里追踪 v2 — 多用户云端版
 
-拍照识别食物热量，薄荷数据库增强营养信息的 PWA Demo。React + Vite + TypeScript。
+拍照识别食物热量，薄荷数据库增强营养信息的服务端 PWA。React + Vite + TypeScript 前端，Fastify + PostgreSQL 后端。
 
-## 架构总览（v3）
+## 架构总览
 
 ```
-┌──────────┐ /api/recognize-food   ┌──────────────────┐
-│ 浏览器   │ ────────────────────► │ 本地 Node 服务器  │  读 .env
-│ (你的)   │ /api/boohee           │ server.cjs /     │  (gitignored)
-│ 不持有   │ ◄──────────────────── │ Vite dev plugin  │ ─────►  百炼 / 薄荷
-│ 任何 key │   返回 { content }    └──────────────────┘
-└──────────┘
+┌──────────┐ same-origin HTTP   ┌─────────────────────────────┐
+│ 浏览器   │ /api/*             │ Fastify (Node 20)           │
+│ (你的)   │ credentials:"include"│   ├── Cookie Session       │
+│ 不持有   │ ◄─────────────────►│   ├── /api/auth/*          │
+│ 任何 key │   JSON + 错误信封  │   ├── /api/recognize-food  │
+└──────────┘                     │   ├── /api/boohee          │
+                                 │   ├── /api/records         │
+                                 │   ├── /api/settings        │
+                                 │   └── /api/health          │
+                                 │             │               │
+                                 │             ▼               │
+                                 │   PostgreSQL 16 (Drizzle)  │
+                                 │   └── users, sessions,     │
+                                 │       food_records,        │
+                                 │       food_items,          │
+                                 │       user_settings,       │
+                                 │       ai_usage             │
+                                 └─────────────────────────────┘
+                                  ▲                ▲
+                                  │ HTTPS          │ HTTPS
+                                  │                │
+                       ┌──────────┴──────┐  ┌──────┴─────────┐
+                       │ 百炼 (Qwen-VL)  │  │ 薄荷 (Boohee)   │
+                       └─────────────────┘  └────────────────┘
 ```
 
-**关键不变量**：
-- `QWEN_API_KEY` / `BOOHEE_API_KEY` 只在**服务端**读取（`.env`，已加入 `.gitignore`）。
-- 浏览器只调 `/api/*`（同源），**永远不接触原始 key**。
-- `/api/recognize-food` 是**专用**接口：浏览器只能提交图片，**不能**控制
-  system prompt、模型名、消息结构或生成参数；服务端在 `server/validation.cjs`
-  里把请求体固定构造好再发给百炼。
-- `dist/` 产物里不会出现任何 key 字符串或 system prompt。
-- `.env` 不会被提交到 GitHub。
-- 原始识别图（1024px）只在内存中存在；只有压缩后的 64px 缩略图可能进入
-  `localStorage`（且仅在用户显式保存时）。
+**关键不变量**
+
+- 浏览器只持有 `HttpOnly + SameSite=Lax` 的 session cookie。`QWEN_API_KEY` 和 `BOOHEE_API_KEY` **永远**只存在于服务端 `.env`。
+- 没有任何 JWT 或 token 存到 `localStorage`。
+- 所有受保护接口（recognize-food / boohee / records / settings）要求登录，401 兜底。
+- 每条记录都按 `userId` 隔离；不可能跨用户读/写/删。
+- 修改性请求（POST/PUT/DELETE）必须有 `Origin` 头，且与 `APP_ORIGIN` 一致，否则 403。
+- `/api/recognize-food` 仍然只在服务端构造 system prompt / 模型 / 温度。客户端只能提交 `imageBase64`。
+- 原始 1024px 识别图只在内存中保存，确认后立即释放；只有 64px 缩略图可能进入数据库（且仅在用户显式保存时）。
 
 ## 快速开始
 
+### 1. 配置环境变量
+
 ```bash
-cp .env.example .env       # 填入 QWEN_API_KEY（必填）和 BOOHEE_API_KEY（推荐）
-npm install
-npm run dev                # 打开 http://localhost:5173，无需再输入 API Key
+cp .env.example .env
+# 编辑 .env，至少填入 DATABASE_URL（参考 docker-compose.yml 里的默认）
+# 以及 QWEN_API_KEY（生产必需）
 ```
 
-## 功能范围
+### 2. 启动数据库 + 服务
 
-- 首页看板：今日总热量、目标进度、今日记录、近 7 日 SVG 趋势图。
-- 拍照引导：拍照和相册选择入口，上传前自动压缩（识别 1024px / 缩略图 64px）。
-- AI 识别：Qwen-VL 调用、JSON 解析、错误 toast、按阶段显示加载文案。
-- 营养增强：薄荷开放平台命中后替换热量密度，并显示蛋白质、脂肪、碳水与食物红绿灯。
-- 克重确认：滑块、步进按钮、份量预设共用同一状态。
-- 记录管理：保存到 `localStorage`（v1 版本化格式，向后兼容旧数组格式），支持按钮删除、移动端左滑删除、桌面右键删除。
-- 历史页面：查看全部记录。
-- 每日上限：设置中可修改摄入上限，首页展示目标、上限、剩余额度和超限提示。
-- 深色模式：跟随系统 `prefers-color-scheme`。
-- PWA：包含 `manifest.json` 与 `sw.js`。
+**方式 A：本地开发（已装好 PostgreSQL）**
 
-## API Key 配置
+```bash
+# 创建数据库与用户
+psql -U postgres -c "CREATE USER caloriemaster WITH PASSWORD 'caloriemaster';"
+psql -U postgres -c "CREATE DATABASE caloriemaster OWNER caloriemaster;"
 
-把 key 填进项目根目录的 `.env`（从 `.env.example` 复制）：
+# 安装依赖、跑迁移
+npm install
+npm run db:migrate
+
+# 启动 dev server（Fastify + Vite 并发）
+npm run dev
+# → http://localhost:5173
+# → API http://localhost:3000
+```
+
+**方式 B：Docker Compose（推荐）**
+
+```bash
+# 在 .env 或 shell 里设置 QWEN_API_KEY / BOOHEE_API_KEY
+export QWEN_API_KEY=sk-xxxxxxxx
+export APP_ORIGIN=https://calorie.example.com  # 公网域名
+
+docker compose up --build
+# → http://localhost:3000
+```
+
+首次启动会自动跑 Drizzle migration；PostgreSQL 数据持久化在 named volume `pg_data`。
+
+## 数据模型
+
+```sql
+users (
+  id              uuid PK,
+  email           varchar(255) UNIQUE NOT NULL,
+  username        varchar(50),
+  password_hash   text NOT NULL,           -- Argon2id
+  created_at, updated_at
+)
+
+sessions (
+  id              uuid PK,
+  user_id         uuid FK users(id) ON DELETE CASCADE,
+  token_hash      text UNIQUE NOT NULL,    -- SHA-256(随机 token)
+  expires_at      timestamp NOT NULL,
+  created_at
+)
+
+user_settings (
+  user_id         uuid PK FK users(id) ON DELETE CASCADE,
+  daily_target    real NOT NULL DEFAULT 2000,
+  daily_limit     real NOT NULL DEFAULT 2300,
+  updated_at
+)
+
+food_records (
+  id              uuid PK,
+  user_id         uuid FK users(id) ON DELETE CASCADE,
+  source_id       varchar(100),            -- 旧 localStorage id / undo / demo
+  timestamp       timestamp NOT NULL,
+  meal_type       varchar(20) NOT NULL,
+  total_calories  real NOT NULL,           -- 服务端重算
+  thumbnail_url   text,                    -- 仅 64px
+  is_demo         boolean NOT NULL DEFAULT false,
+  created_at, updated_at,
+  UNIQUE (user_id, source_id)              -- 用于去重
+)
+
+food_items (
+  id              uuid PK,
+  record_id       uuid FK food_records(id) ON DELETE CASCADE,
+  position        integer NOT NULL,
+  name            varchar(50) NOT NULL,
+  weight_g        real NOT NULL,
+  calories_per_100g real NOT NULL,
+  total_calories  real NOT NULL,
+  confidence      varchar(10),
+  calorie_source  varchar(20),
+  boohee_code     varchar(50),
+  protein_per_100g, fat_per_100g, carbohydrate_per_100g, health_light
+)
+
+ai_usage (
+  id              uuid PK,
+  user_id         uuid FK users(id) ON DELETE CASCADE,
+  date            varchar(10) NOT NULL,    -- YYYY-MM-DD UTC
+  count           integer NOT NULL DEFAULT 0,
+  UNIQUE (user_id, date)                   -- 每日配额
+)
+```
+
+完整迁移在 `migrations/0000_initial.sql`，由 Drizzle 生成。
+
+## 认证与 Cookie 设计
+
+- **密码哈希**：Argon2id（`memoryCost=19 MiB`、`timeCost=2`、`parallelism=1`）。明文密码从不进入数据库或日志。
+- **Session Token**：`crypto.randomBytes(32)` 生成 256 位 base64url 字符串。Cookie 保存原始 token，数据库只存 `SHA-256(token)`。
+- **Cookie 属性**：
+  - `HttpOnly`：JS 无法读取，挡住 XSS 偷 token
+  - `SameSite=Lax`：挡掉跨站 POST CSRF
+  - `Secure`：生产环境开启（HTTPS）
+  - `Max-Age`：30 天（可配 `SESSION_TTL_DAYS`）
+  - `Path=/`
+  - 没有 `Domain` 属性 → 限定在颁发 cookie 的 host
+- **CSRF**：除了 SameSite，所有 `POST/PUT/DELETE/PATCH` 都校验 `Origin === APP_ORIGIN`，否则 403 `CSRF_ORIGIN_REJECTED`。
+- **登录失败信息统一**：邮箱不存在 / 密码错误都返回 401 `INVALID_CREDENTIALS`，防止枚举。
+- **时序安全**：对未知邮箱仍然跑一次 Argon2id 验证（用预生成的 dummy hash），让两种情况的延迟接近。
+
+## API 列表
+
+| Method | Path | Auth | 说明 |
+|---|---|---|---|
+| `GET`  | `/api/health` | – | 健康检查 |
+| `POST` | `/api/auth/register` | – | 注册 + 自动登录 |
+| `POST` | `/api/auth/login` | – | 登录 |
+| `POST` | `/api/auth/logout` | Cookie | 退出，删除 session |
+| `GET`  | `/api/auth/me` | Cookie | 当前用户信息 |
+| `POST` | `/api/recognize-food` | Cookie | 图片 → Qwen |
+| `GET`  | `/api/boohee?code=…` | Cookie | 营养详情 |
+| `GET`  | `/api/records` | Cookie | 列表（按 timestamp 倒序） |
+| `POST` | `/api/records` | Cookie | 新建 |
+| `PUT`  | `/api/records/:id` | Cookie | 更新 |
+| `DELETE` | `/api/records/:id` | Cookie | 删除 |
+| `GET`  | `/api/records/:id` | Cookie | 单条 |
+| `POST` | `/api/records/import` | Cookie | 一次性导入（迁移用） |
+| `GET`  | `/api/settings` | Cookie | 读取设置 |
+| `PUT`  | `/api/settings` | Cookie | 更新设置 |
+
+**统一错误信封**：
+```json
+{ "error": { "code": "STABLE_CODE", "message": "可读提示" } }
+```
+
+错误码：`INVALID_REQUEST`、`UNAUTHENTICATED`、`FORBIDDEN`、`INVALID_CREDENTIALS`、`EMAIL_ALREADY_EXISTS`、`PASSWORD_TOO_WEAK`、`SESSION_EXPIRED`、`METHOD_NOT_ALLOWED`、`ROUTE_NOT_FOUND`、`CSRF_ORIGIN_REJECTED`、`RATE_LIMITED`、`DAILY_QUOTA_EXCEEDED`、`PAYLOAD_TOO_LARGE`、`UNSUPPORTED_MEDIA`、`QWEN_NOT_CONFIGURED`、`BOOHEE_NOT_CONFIGURED`、`UPSTREAM_TIMEOUT`、`UPSTREAM_ERROR`、`NO_FOOD_DETECTED`、`RECORD_NOT_FOUND`、`DATABASE_ERROR`。
+
+## AI 限流
+
+| 维度 | 实现 | 默认 |
+|---|---|---|
+| 每用户每分钟 | 进程内存 sliding window | 5 |
+| 每 IP 每分钟 | 进程内存 sliding window | 20 |
+| 每用户每天 | PostgreSQL upsert | 100 |
+| 每 IP 登录/注册每分钟 | 进程内存 sliding window | 10 |
+
+**注意**：内存限流只在单实例下有效。多实例部署需要共享存储（PostgreSQL 或 Redis）。本仓库不为多实例提供开箱即用的方案。
+
+## 反向代理（Caddy / Nginx / Cloudflare）
+
+把反向代理放前面，HTTPS 终止、静态缓存都可以。需要在环境变量中：
 
 ```dotenv
-QWEN_API_KEY=               # 必填：百炼 / 通义千问
-QWEN_MODEL=qwen3-vl-flash   # 可选覆盖
-BOOHEE_API_KEY=             # 推荐：薄荷开放平台
+TRUST_PROXY=true
+APP_ORIGIN=https://calorie.example.com
+SESSION_COOKIE_NAME=caloriemaster_session  # 可选，保持默认
 ```
 
-`.env` 在 `.gitignore` 里，**不会**随代码上传到 GitHub。设置弹窗现在只调整
-"每日目标 / 上限"两项，不再要求输入 API Key。
+**Caddyfile 示例**：
+```
+calorie.example.com {
+  reverse_proxy 127.0.0.1:3000 {
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto https
+  }
+}
+```
 
-## 开发与构建
+**Nginx 示例**：
+```nginx
+location / {
+  proxy_pass http://127.0.0.1:3000;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header Host $host;
+}
+```
+
+**Cloudflare**：`TRUST_PROXY=true` + `APP_ORIGIN` 必须设为最终的 https URL。
+
+## 前端变化
+
+- 启动时调用 `GET /api/auth/me`，根据 `loading | authenticated | unauthenticated` 三态决定路由。
+- 登录/注册页：`src/pages/AuthForm.tsx`。失败时显示服务端 `message`。
+- 主页（登录后）调用 `useRecords()` / `useSettings()`，全部走 API。
+- 删除记录的撤销重新 `POST` 一条新记录（带 `sourceId: "undo-<oldId>"`），避免在数据库里"假装恢复"。
+- 旧 `localStorage` 里的 `calorie_records` 数据：登录后弹出"导入历史记录"提示。用户确认后批量 `POST /api/records/import`，完成后清除旧 key。
+- `useRecognitionFlow.startRecognition()` 返回 `boolean`：仅在成功时跳到确认页。`NO_FOOD_DETECTED` 时停留在拍照页。
+- `useSettings()`、`useRecords()` 全部 async，失败抛错，UI 转 toast。
+
+## localStorage 迁移
+
+升级到 v2 后，登录成功 → `hasPendingMigration()` 检测到旧 `calorie_records` 数组 → 弹出 `MigrationPrompt` 组件。用户：
+
+- **导入**：把每条记录通过 `POST /api/records` 上传（带 `sourceId = 原 id`），成功后才删除 localStorage；部分失败则保留旧数据让用户重试。
+- **跳过**：标记 `calorie_records_migrated_v1 = done`，并删除旧 key（防止下次再问）。
+
+`sourceId` 字段 + `(user_id, source_id) UNIQUE` 索引保证幂等：即使重复导入同一批旧记录也只会创建一次。
+
+## 备份建议
+
+`docker compose exec postgres pg_dump -U caloriemaster -d caloriemaster -Fc -f /tmp/backup.dump` 定期备份。`docker compose cp` 把 dump 拉出来。建议至少每日 1 次。
+
+## 环境变量
+
+完整列表见 `.env.example`。重点：
+
+- `DATABASE_URL`：Postgres 连接串。
+- `APP_ORIGIN`：部署后的对外 URL（影响 CSRF 和 cookie 域）。
+- `TRUST_PROXY`：是否信任 `X-Forwarded-*`。
+- `SESSION_TTL_DAYS`：cookie 寿命（默认 30）。
+- `QWEN_API_KEY`、`BOOHEE_API_KEY`：服务端持有，浏览器永远拿不到。
+- `AI_RATE_LIMIT_PER_MINUTE`、`AI_DAILY_QUOTA`、`AUTH_RATE_LIMIT_PER_MINUTE`、`AI_IP_RATE_LIMIT_PER_MINUTE`。
+
+启动时 `src/server/config.ts` 用 Zod 校验所有关键变量。失败立刻退出，不静默回退。
+
+## 命令
 
 ```bash
-npm run dev          # Vite 开发服务器（http://localhost:5173），自带 /api/* 代理
+npm run dev          # 并发启动 Fastify (3000) + Vite (5173)，Vite 代理 /api
+npm run dev:server   # 仅 Fastify
+npm run dev:web      # 仅 Vite
+npm run build        # tsc (server) + vite build (client)
+npm run start        # NODE_ENV=production node dist-server/server/index.js
+npm run db:generate  # 基于 schema 生成新 migration
+npm run db:migrate   # 应用 migrations
+npm run db:studio    # Drizzle Studio（可视化）
 npm run typecheck    # tsc --noEmit
 npm run lint         # ESLint
-npm test             # Vitest
-npm run build        # tsc + Vite 生产构建，输出到 dist/
-npm run preview      # 仅服务 dist/ 的生产预览（同时挂 /api/* 代理）
+npm test             # 全部测试
 ```
 
-## `/api/*` 端点
+## 测试
 
-由 `server/api.cjs` 提供，同时挂在 `npm run dev` 的 Vite 中间件和
-`npm run preview` 的 HTTP 服务器上。所有端点使用精确路径匹配
-（`/api/recognize-food-anything` 不会被错误处理，会返回 404）：
+```bash
+# 不需要数据库的测试
+npm test
 
-| Method | Path                  | 说明                                                                |
-|--------|-----------------------|---------------------------------------------------------------------|
-| `POST` | `/api/recognize-food` | 接收 `{ imageBase64 }`，服务端固定构造 system prompt / 模型 / 消息 |
-| `GET`  | `/api/boohee?code=xxx` | 透传到 `api.boohee.com/v1/food/detail`，自动加 `X-Api-Key`        |
+# 全部测试（需要 Postgres）
+docker run -d --rm --name cm-test -p 5433:5432 \
+  -e POSTGRES_USER=cm -e POSTGRES_PASSWORD=cm -e POSTGRES_DB=cm \
+  postgres:16-alpine
+DATABASE_URL=postgresql://cm:cm@localhost:5433/cm npm test
+```
 
-通用 `/api/qwen` 已经**移除**：浏览器无法再向 Qwen 发起任意请求。
+不设 `DATABASE_URL` 时 `tests/server/*` 会自动跳过（输出明确提示）。
 
-### `/api/recognize-food` 安全约束
+## 已知限制
 
-- 请求体上限 **6 MB**；超出返回 `413 PAYLOAD_TOO_LARGE`。
-- Content-Type 必须为 `application/json`，否则 `415 UNSUPPORTED_MEDIA`。
-- `imageBase64` 必须是 `data:image/jpeg|png|webp;base64,...`，且 base64
-  非空且编码合法。**不接受**远程 HTTP 图片 URL、SVG、其它 MIME。
-- 服务端只读取 `imageBase64`；其它字段（如 `messages` / `model` /
-  `response_format` / `temperature`）即使被提交也会被忽略。
-- 服务端固定 `temperature: 0.1`、强制 `response_format: json_object`、固定模型
-  （`QWEN_MODEL` 或默认 `qwen3-vl-flash`）、固定 system prompt。
-- 上游超时 30 秒；返回 `504 UPSTREAM_TIMEOUT`。
-- Key 缺失返回 `503 QWEN_NOT_CONFIGURED` / `BOOHEE_NOT_CONFIGURED`。
-- 错误响应统一结构：
-
-  ```json
-  { "error": { "code": "PAYLOAD_TOO_LARGE", "message": "..." } }
-  ```
-
-支持的错误码：`INVALID_REQUEST`、`UNSUPPORTED_MEDIA`、`PAYLOAD_TOO_LARGE`、
-`QWEN_NOT_CONFIGURED`、`BOOHEE_NOT_CONFIGURED`、`UPSTREAM_TIMEOUT`、
-`UPSTREAM_ERROR`、`METHOD_NOT_ALLOWED`、`ROUTE_NOT_FOUND`。
-
-## 薄荷食物映射
-
-`src/data/booheeFoods.ts` 内置约 100 种中国常见食物的标准名 → 薄荷 code 映射，
-配合 AI prompt 让模型返回标准名，命中后能稳定拿到薄荷的精确热量、营养素、
-红绿灯和缩略图。冷门食物（地方菜、特定品牌、新品）大概率命中不了，需要手动
-扩展此表。
-
-## 演示数据
-
-页面内置"演示"按钮：首次点击且无真实数据时，会灌入 7 天历史演示数据让趋势图
-立刻有内容。
-
-## 数据持久化
-
-- 食物记录保存在 `localStorage`，key 为 `calorie_records`。
-- 存储结构：`{ version: 1, records: Record[] }`，向前兼容旧的纯数组格式。
-- 只有压缩后的缩略图（≤ 64px JPEG Data URL）可能被保存；原始 1024px 识别
-  图**永不**进入 `localStorage`，仅在识别/确认页面的 React 内存中存在。
-- localStorage 读取会做容错：JSON 损坏、结构错误、字段缺失都返回空数组，
-  不会白屏。写入失败时抛 `RecordsStorageError`，由 UI 转成 toast。
-
-## 生产部署注意事项
-
-`/api/*` 代理**无身份验证、无速率限制**——任何能访问你部署的服务器的人都能
-用你的 key 调用百炼 / 薄荷。本仓库只适合：
-
-- 本地开发
-- 部署到你自己的内网 / 家庭服务器（受防火墙保护）
-
-如果要公开部署，必须在代理前加一层鉴权和限流（API token / OAuth /
-Cloudflare Access / 速率限制等）。把 `server/api.cjs` 当作参考实现，业务侧
-加上自己的网关。
+1. **单实例限流**：`AI_RATE_LIMIT_PER_MINUTE` 等基于内存。多实例部署需要共享存储。
+2. **没有忘记密码 / 邮箱验证**：本期不做。可以后续在 `users` 加 `email_verified` 字段并补 `/api/auth/*` 端点。
+3. **没有第三方 OAuth**。
+4. **没有图片云存储**：本期纯文本 thumbnail（≤ 32KB）。如果要支持原图备份，需要接 S3。
+5. **食物重量仍然只是视觉估算**。登录与加密不能让它变准。`/api/recognize-food` 的 prompt 已写明不确定性。
+6. **CSRF Origin 校验依赖 APP_ORIGIN**：必须正确配置。`http://` 和 `https://` 视为不同 origin。
+7. **没有管理后台**：Drizzle Studio 是当前唯一的运维 UI。
+8. **没有 Redis / 队列 / Kubernetes**：单体 PostgreSQL 足够个人或小团队使用。
 
 ## 目录结构
 
 ```
 caloriemaster/
-├── public/                  # 静态资源（manifest、sw、icons）
 ├── src/
-│   ├── components/          # 通用 / 业务组件
-│   ├── pages/               # 路由页面
-│   ├── hooks/               # 自定义 React Hooks
-│   │   ├── useRecognitionFlow.ts   # 识别流程状态机
-│   │   ├── useRecords.ts           # 记录 CRUD（函数式更新）
-│   │   ├── useSettings.ts
+│   ├── components/                # React 组件
+│   │   ├── auth/                  # 暂无独立组件
+│   │   ├── common/                # Modal / LoadingOverlay / SetupModal / Toast / MigrationPrompt
+│   │   ├── layout/                # TopNav / BottomNav
+│   │   ├── recognition/           # FoodCard / WeightAdjuster / ImagePicker
+│   │   └── records/               # RecordList / RecordCard / TrendChart
+│   ├── data/                      # 静态数据 (booheeFoods, demoData)
+│   ├── hooks/
+│   │   ├── useAuth.ts             # NEW: 认证状态
+│   │   ├── useRecords.ts          # API 驱动
+│   │   ├── useSettings.ts         # API 驱动
+│   │   ├── useRecognitionFlow.ts  # 识别流程状态机，返回 boolean
 │   │   └── useToast.ts
-│   ├── services/            # /api/* 客户端
-│   │   ├── http.ts          # fetch + 错误码映射
-│   │   ├── qwen.ts          # 调 /api/recognize-food
+│   ├── pages/
+│   │   ├── AuthForm.tsx           # NEW: 登录 + 注册
+│   │   ├── HomePage.tsx
+│   │   ├── CameraPage.tsx
+│   │   ├── ConfirmPage.tsx
+│   │   └── HistoryPage.tsx
+│   ├── server/                    # NEW: Fastify 后端
+│   │   ├── index.ts               # Fastify 入口，路由注册
+│   │   ├── config.ts              # Zod 环境变量校验
+│   │   ├── errors.ts              # 统一错误信封
+│   │   ├── ai/
+│   │   │   ├── validation.ts      # 图片 / record Zod schema + 限流常量
+│   │   │   ├── rateLimit.ts       # 内存限流器
+│   │   │   └── routes.ts          # /api/recognize-food + /api/boohee
+│   │   ├── auth/
+│   │   │   ├── session.ts         # token gen / hash
+│   │   │   ├── service.ts         # register / login / resolve / destroy
+│   │   │   ├── middleware.ts      # requireAuth
+│   │   │   └── routes.ts
+│   │   ├── records/
+│   │   │   ├── service.ts         # CRUD + import
+│   │   │   └── routes.ts
+│   │   ├── settings/
+│   │   │   ├── service.ts
+│   │   │   └── routes.ts
+│   │   └── db/
+│   │       ├── schema.ts          # Drizzle 表定义
+│   │       ├── client.ts          # postgres.js 客户端
+│   │       └── migrate.ts         # CLI runner
+│   ├── services/                  # 浏览器侧 API 客户端
+│   │   ├── auth.ts                # fetchMe / login / register / logout
+│   │   ├── records.ts             # list / create / update / delete / import
+│   │   ├── settings.ts
+│   │   ├── qwen.ts                # POST /api/recognize-food
 │   │   ├── boohee.ts
-│   │   └── image.ts
-│   ├── storage/             # localStorage 读写（带版本号 + 容错）
-│   ├── data/                # 静态数据 / 演示数据
-│   ├── utils/               # 日期、营养、校验、CSV
-│   ├── types/               # TypeScript 类型
-│   ├── styles/global.css    # 全部样式
-│   ├── App.tsx              # 应用根组件
-│   └── main.tsx             # 入口
-├── server/
-│   ├── validation.cjs       # 纯函数：图像校验 + 上游请求构造
-│   ├── api.cjs              # /api/* 代理（共享于 dev + preview）
-│   └── server.cjs           # 生产预览服务器
-├── tests/                   # Vitest 测试
-├── index.html               # Vite 入口
-├── vite.config.ts           # Vite + 代理插件
+│   │   ├── http.ts                # apiRequest (含 credentials: include)
+│   │   ├── image.ts               # compressForRecognition / compressForThumbnail
+│   │   └── migrate.ts             # 旧 localStorage → API
+│   ├── storage/                   # 已删除（迁到服务端）
+│   ├── styles/global.css
+│   ├── types/index.ts
+│   ├── App.tsx                    # 鉴权门控路由
+│   └── main.tsx
+├── tests/                         # Vitest
+│   ├── server/api.test.ts         # NEW: 21 个集成测试（需 PG）
+│   ├── useAuth.test.ts            # NEW
+│   ├── useRecords.test.ts         # 改写为 API 驱动
+│   ├── recognizeFoodService.test.ts
+│   ├── validation.test.ts
+│   ├── csv.test.ts
+│   ├── demoData.test.ts
+│   └── setup.ts
+├── migrations/                    # Drizzle 生成
+│   └── 0000_initial.sql
+├── drizzle.config.ts              # NEW
+├── tsconfig.json                  # 客户端
+├── tsconfig.server.json           # NEW: 服务端
+├── vite.config.ts                 # 代理 /api → 3000
 ├── vitest.config.ts
-├── tsconfig.json
 ├── eslint.config.js
-└── package.json
+├── Dockerfile                     # NEW
+├── docker-compose.yml             # NEW
+├── .dockerignore                  # NEW
+└── .env.example                   # 完整环境变量
 ```

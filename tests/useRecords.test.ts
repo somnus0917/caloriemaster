@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { renderHook, act, waitFor } from "@testing-library/react";
 import { useRecords } from "../src/hooks/useRecords";
-import type { Food, Record } from "../src/types";
+import type { Food } from "../src/types";
 
 const SAMPLE_FOODS: Food[] = [
   {
@@ -17,6 +17,37 @@ const SAMPLE_FOODS: Food[] = [
 
 const SAMPLE_WEIGHTS = [150];
 
+const sampleRecordDto = {
+  id: "r1",
+  userId: "u1",
+  sourceId: null,
+  timestamp: 1700000000000,
+  mealType: "午餐",
+  totalCalories: 174,
+  thumbnailUrl: null,
+  isDemo: false,
+  createdAt: "2023-11-14T22:13:20.000Z",
+  updatedAt: "2023-11-14T22:13:20.000Z",
+  foods: [
+    {
+      id: "f1",
+      name: "米饭",
+      weightG: 150,
+      caloriesPer100g: 116,
+      totalCalories: 174,
+      confidence: "med",
+      calorieSource: "ai_estimate",
+      booheeCode: null,
+      proteinPer100g: null,
+      fatPer100g: null,
+      carbohydratePer100g: null,
+      healthLight: null,
+    },
+  ],
+};
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   if (typeof globalThis !== "undefined" && "localStorage" in globalThis) {
     try {
@@ -25,161 +56,117 @@ beforeEach(() => {
       // ignore
     }
   }
+  fetchMock = vi.fn();
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
 });
 
-function addSampleRecord(
-  hook: { current: ReturnType<typeof useRecords> },
-  thumbnail: string | null = null,
-): Record {
-  let added!: Record;
-  act(() => {
-    added = hook.current.addRecord(SAMPLE_FOODS, SAMPLE_WEIGHTS, thumbnail);
-  });
-  return added;
+function mockJsonResponse(body: unknown, init: { status?: number } = {}) {
+  return {
+    ok: init.status === undefined || init.status < 400,
+    status: init.status ?? 200,
+    text: async () => JSON.stringify(body),
+    json: async () => body,
+  } as Response;
 }
 
-describe("useRecords", () => {
-  it("adds a new record and exposes the create flow", () => {
+describe("useRecords (API-backed)", () => {
+  it("loads records on mount via GET /api/records", async () => {
+    fetchMock.mockResolvedValueOnce(mockJsonResponse({ records: [sampleRecordDto] }));
     const { result } = renderHook(() => useRecords());
-    const added = addSampleRecord(result);
-    expect(added.id).toBeTruthy();
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
     expect(result.current.records).toHaveLength(1);
+    expect(result.current.records[0].id).toBe("r1");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/^\/api\/records(\?|$)/);
+    expect(init.credentials).toBe("include");
   });
 
-  it("updates an existing record and recomputes totals from the new weight", () => {
-    const { result } = renderHook(() => useRecords());
-    const added = addSampleRecord(result);
-    act(() => {
-      const updated = result.current.updateRecord(
-        added.id,
-        SAMPLE_FOODS,
-        [200],
+  it("addRecord POSTs to /api/records and prepends the result", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ records: [] }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({ record: { ...sampleRecordDto, id: "r2", timestamp: 1700000001000 } }),
       );
-      expect(updated).not.toBeNull();
-      expect(updated!.foods[0].weight_g).toBe(200);
-      expect(updated!.foods[0].total_calories).toBe(232);
+    const { result } = renderHook(() => useRecords());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let added: import("../src/types").Record | null = null;
+    await act(async () => {
+      added = await result.current.addRecord(SAMPLE_FOODS, SAMPLE_WEIGHTS, null);
     });
+    expect(added).not.toBeNull();
+    expect(result.current.records).toHaveLength(1);
+    expect(result.current.records[0].id).toBe("r2");
+    const [, init] = fetchMock.mock.calls[1];
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body).items[0].name).toBe("米饭");
   });
 
-  it("removes a record", () => {
+  it("removeRecord DELETEs and returns the removed record for undo", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ records: [sampleRecordDto] }))
+      .mockResolvedValueOnce(mockJsonResponse({ record: sampleRecordDto }));
     const { result } = renderHook(() => useRecords());
-    const added = addSampleRecord(result);
-    act(() => {
-      result.current.removeRecord(added.id);
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    let removed: { id?: string } = {};
+    await act(async () => {
+      const r = await result.current.removeRecord("r1");
+      removed = r ?? {};
+    });
+    expect(removed.id).toBe("r1");
+    expect(result.current.records).toHaveLength(0);
+    expect(fetchMock.mock.calls[1][1].method).toBe("DELETE");
+  });
+
+  it("restoreRecord re-POSTs a previously deleted record", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ records: [] }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({ record: { ...sampleRecordDto, id: "r3", timestamp: 1700000002000 } }),
+      );
+    const { result } = renderHook(() => useRecords());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const record = {
+      ...sampleRecordDto,
+      id: "r3",
+      timestamp: 1700000002000,
+      mealType: "午餐",
+      totalCalories: 174,
+      foods: [
+        {
+          name: "米饭",
+          weight_g: 150,
+          calories_per_100g: 116,
+          total_calories: 174,
+          confidence: "med" as const,
+          cal_source: "ai_estimate" as const,
+        },
+      ],
+    };
+    await act(async () => {
+      await result.current.restoreRecord(record);
+    });
+    expect(result.current.records[0].id).toBe("r3");
+    expect(fetchMock.mock.calls[1][1].method).toBe("POST");
+  });
+
+  it("on server failure during addRecord, the local state stays unchanged", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ records: [] }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({ error: { code: "DATABASE_ERROR", message: "boom" } }, { status: 500 }),
+      );
+    const { result } = renderHook(() => useRecords());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    await act(async () => {
+      try {
+        await result.current.addRecord(SAMPLE_FOODS, SAMPLE_WEIGHTS, null);
+      } catch {
+        // expected
+      }
     });
     expect(result.current.records).toHaveLength(0);
-  });
-
-  it("restores a soft-deleted record preserving id and order", () => {
-    const { result } = renderHook(() => useRecords());
-    const first = addSampleRecord(result);
-    act(() => {
-      result.current.removeRecord(first.id);
-    });
-    act(() => {
-      result.current.restoreRecord(first);
-    });
-    expect(result.current.records).toHaveLength(1);
-    expect(result.current.records[0].id).toBe(first.id);
-  });
-
-  it("does not seed demo data when records exist", () => {
-    const { result } = renderHook(() => useRecords());
-    addSampleRecord(result);
-    let seeded: boolean | undefined;
-    act(() => {
-      seeded = result.current.seedDemoIfEmpty();
-    });
-    expect(seeded).toBe(false);
-    expect(result.current.records).toHaveLength(1);
-  });
-
-  it("seeds demo data when storage is empty", () => {
-    const { result } = renderHook(() => useRecords());
-    expect(result.current.records).toHaveLength(0);
-    let seeded: boolean | undefined;
-    act(() => {
-      seeded = result.current.seedDemoIfEmpty();
-    });
-    expect(seeded).toBe(true);
-    expect(result.current.records.length).toBeGreaterThan(0);
-    expect(result.current.records.every((r) => r.isDemo)).toBe(true);
-  });
-});
-
-describe("useRecords: ordering and de-duplication", () => {
-  it("sorts records by timestamp descending after add", async () => {
-    const { result } = renderHook(() => useRecords());
-    // Force distinct timestamps.
-    const r1 = addSampleRecord(result);
-    await new Promise((r) => setTimeout(r, 2));
-    const r2 = addSampleRecord(result);
-    await new Promise((r) => setTimeout(r, 2));
-    const r3 = addSampleRecord(result);
-    const ids = result.current.records.map((r) => r.id);
-    expect(ids).toEqual([r3.id, r2.id, r1.id]);
-  });
-
-  it("undo after delete does not create a duplicate when the same record is restored", () => {
-    const { result } = renderHook(() => useRecords());
-    const r1 = addSampleRecord(result);
-    const r2 = addSampleRecord(result);
-    act(() => {
-      result.current.removeRecord(r1.id);
-    });
-    expect(result.current.records.map((r) => r.id)).toEqual([r2.id]);
-    act(() => {
-      result.current.restoreRecord(r1);
-    });
-    act(() => {
-      // A second restore with the same id should be a no-op.
-      result.current.restoreRecord(r1);
-    });
-    expect(result.current.records).toHaveLength(2);
-    expect(result.current.records.find((r) => r.id === r1.id)).toBeTruthy();
-  });
-
-  it("does not produce duplicate IDs when restoring the same record back-to-back", () => {
-    const { result } = renderHook(() => useRecords());
-    const r1 = addSampleRecord(result);
-    act(() => {
-      result.current.removeRecord(r1.id);
-    });
-    act(() => {
-      result.current.restoreRecord(r1);
-    });
-    act(() => {
-      result.current.removeRecord(r1.id);
-    });
-    act(() => {
-      result.current.restoreRecord(r1);
-    });
-    const ids = result.current.records.map((r) => r.id);
-    expect(ids.filter((id) => id === r1.id)).toHaveLength(1);
-  });
-});
-
-describe("useRecords: image persistence (no imageDataUrl fallback)", () => {
-  it("addRecord stores null thumbnailUrl when no thumbnail is provided", () => {
-    const { result } = renderHook(() => useRecords());
-    addSampleRecord(result, null);
-    const stored = result.current.records[0];
-    expect(stored.thumbnailUrl).toBeNull();
-  });
-
-  it("addRecord only stores the provided thumbnail, never an imageDataUrl", () => {
-    const { result } = renderHook(() => useRecords());
-    const thumb = "data:image/jpeg;base64,/9j/small-thumb";
-    addSampleRecord(result, thumb);
-    const stored = result.current.records[0] as unknown as Record;
-    expect(stored.thumbnailUrl).toBe(thumb);
-    expect((stored as unknown as { imageDataUrl?: unknown }).imageDataUrl).toBeUndefined();
-  });
-
-  it("persists to localStorage without any imageDataUrl field", () => {
-    const { result } = renderHook(() => useRecords());
-    addSampleRecord(result, "data:image/jpeg;base64,thumb");
-    const raw = globalThis.localStorage.getItem("calorie_records") || "{}";
-    expect(raw).not.toMatch(/imageDataUrl/);
   });
 });

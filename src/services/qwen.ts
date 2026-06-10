@@ -1,3 +1,7 @@
+/**
+ * Food recognition client. Sends ONLY the image; the server builds the
+ * upstream Qwen request (system prompt, model, params) itself.
+ */
 import type { Food, RecognitionResult } from "../types";
 import {
   computeTotalCalories,
@@ -7,8 +11,8 @@ import {
   sanitizeName,
   sanitizeOptionalNumber,
   sanitizeWeight,
-} from "../utils/validation";
-import { fetchWithTimeout, readApiError } from "./http";
+} from "../utils/validation.js";
+import { ApiError, apiRequest } from "./http.js";
 
 interface RawFood {
   name?: unknown;
@@ -56,15 +60,12 @@ export function normalizeAiResult(parsed: unknown): RecognitionResult {
     throw new Error("AI 返回格式异常");
   }
   const result = parsed as { foods?: unknown; note?: unknown };
-  if (!Array.isArray(result.foods) || result.foods.length === 0) {
+  if (!Array.isArray(result.foods)) {
     throw new Error("AI 返回格式异常");
   }
   const foods = result.foods
     .map((f) => (f && typeof f === "object" ? normalizeFood(f as RawFood) : null))
     .filter((f): f is Food => f !== null);
-  if (foods.length === 0) {
-    throw new Error("AI 返回格式异常");
-  }
   return {
     foods,
     total_calories: foods.reduce((s, f) => s + f.total_calories, 0),
@@ -72,12 +73,6 @@ export function normalizeAiResult(parsed: unknown): RecognitionResult {
   };
 }
 
-/**
- * Parse a JSON string from the model, optionally wrapped in a single
- * ```json ... ``` fence. The previous implementation used a greedy
- * regex which could swallow too much; this version prefers JSON.parse
- * and only strips the outermost fence.
- */
 export function parseAiContent(content: string): unknown {
   const trimmed = content.trim();
   const fence = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -85,49 +80,47 @@ export function parseAiContent(content: string): unknown {
   return JSON.parse(target);
 }
 
-export interface RecognizeOptions {
-  imageBase64: string;
-  timeoutMs?: number;
-}
+export type RecognizeOutcome = { ok: true; result: RecognitionResult } | { ok: false; reason: "no_food" | "error"; message?: string };
 
-/**
- * Call the local food-recognition proxy. The browser sends ONLY the
- * image; the system prompt, model name, and generation parameters are
- * all fixed on the server side (see server/validation.cjs).
- */
 export async function recognizeFood({
   imageBase64,
   timeoutMs,
-}: RecognizeOptions): Promise<RecognitionResult> {
-  const response = await fetchWithTimeout(
-    "/api/recognize-food",
-    {
+}: {
+  imageBase64: string;
+  timeoutMs?: number;
+}): Promise<RecognizeOutcome> {
+  let content = "";
+  try {
+    const data = await apiRequest<{ content: string }>("/api/recognize-food", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // IMPORTANT: the body intentionally has no other fields. Adding
-      // `messages`, `model`, `response_format`, etc. would not help
-      // — the server builds the upstream request from scratch and
-      // would simply ignore them. We still don't send them, to keep
-      // the wire contract minimal.
-      body: JSON.stringify({ imageBase64 }),
+      body: { imageBase64 },
       timeoutMs,
-    },
-  );
-
-  if (!response.ok) {
-    throw await readApiError(response);
+    });
+    content = typeof data.content === "string" ? data.content : "";
+  } catch (err) {
+    if (err instanceof ApiError && err.code === "NO_FOOD_DETECTED") {
+      return { ok: false, reason: "no_food" };
+    }
+    return { ok: false, reason: "error", message: err instanceof Error ? err.message : "识别失败" };
   }
-
-  const data = (await response.json()) as { content?: unknown };
-  const content = typeof data.content === "string" ? data.content : "";
   if (!content) {
-    throw new Error("AI 返回格式异常");
+    return { ok: false, reason: "error", message: "AI 返回格式异常" };
   }
   let parsed: unknown;
   try {
     parsed = parseAiContent(content);
   } catch {
-    throw new Error("AI 返回格式异常");
+    return { ok: false, reason: "error", message: "AI 返回格式异常" };
   }
-  return normalizeAiResult(parsed);
+  let result: RecognitionResult;
+  try {
+    result = normalizeAiResult(parsed);
+  } catch {
+    // Could be: empty foods array → NO_FOOD_DETECTED.
+    return { ok: false, reason: "no_food" };
+  }
+  if (result.foods.length === 0) {
+    return { ok: false, reason: "no_food" };
+  }
+  return { ok: true, result };
 }

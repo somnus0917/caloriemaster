@@ -1,6 +1,10 @@
+/**
+ * 薄荷 (Boohee) enrichment client. The browser only talks to the
+ * local /api/boohee proxy; the server holds the key.
+ */
+import { apiRequest } from "./http.js";
 import type { Food, RecognitionResult } from "../types";
 import { computeTotalCalories } from "../utils/validation";
-import { fetchWithTimeout } from "./http";
 import { lookupBooheeCode } from "../data/booheeFoods";
 
 export interface BooheeDetail {
@@ -13,13 +17,6 @@ export interface BooheeDetail {
   health_light: 0 | 1 | 2 | 3;
   image_url: string;
   source: "boohee";
-}
-
-interface RawBoohee {
-  code?: unknown;
-  data?: RawSource;
-  food?: RawSource;
-  name?: unknown;
 }
 
 interface RawSource {
@@ -40,6 +37,13 @@ interface RawSource {
   vitamin?: Array<{ key?: unknown; name_en?: unknown; value?: unknown }>;
   mineral?: Array<{ key?: unknown; name_en?: unknown; value?: unknown }>;
   other_ingredients?: Array<{ key?: unknown; name_en?: unknown; value?: unknown }>;
+}
+
+interface RawBoohee {
+  code?: unknown;
+  data?: RawSource;
+  food?: RawSource;
+  name?: unknown;
 }
 
 function findIngredient(source: RawSource, key: string): number | null {
@@ -94,50 +98,34 @@ export function parseBooheeNutrition(data: RawBoohee, fallbackName: string): Boo
   };
 }
 
-/**
- * Call 薄荷 through the local /api/boohee proxy. The proxy holds
- * BOOHEE_API_KEY (loaded from .env on the server) and forwards the request.
- */
 export async function queryBooheeDetail(
   code: string,
   fallbackName: string,
-  timeoutMs?: number,
 ): Promise<BooheeDetail | null> {
   if (!code) return null;
-  let response: Response;
   try {
-    response = await fetchWithTimeout(
+    const data = await apiRequest<{ code?: number } & RawBoohee>(
       `/api/boohee?code=${encodeURIComponent(code)}`,
-      { timeoutMs },
     );
-  } catch (error) {
-    console.warn("[boohee] proxy fetch failed:", (error as Error).message);
+    if (data.code === 0 || data.data || data.food) {
+      return parseBooheeNutrition(data, fallbackName);
+    }
     return null;
-  }
-  if (!response.ok) {
-    if (response.status === 503) {
-      // Server doesn't have BOOHEE_API_KEY configured — silently fall back.
-      return null;
+  } catch (err) {
+    // 503 = server doesn't have a key configured — silent fallback.
+    // Anything else is also non-fatal for the user (we degrade to AI estimates).
+    if (err instanceof Error) {
+      console.warn("[boohee] proxy fetch failed:", err.message);
     }
     return null;
   }
-  let data: { code?: number } & RawBoohee;
-  try {
-    data = (await response.json()) as { code?: number } & RawBoohee;
-  } catch {
-    return null;
-  }
-  if (data.code === 0 || data.data || data.food) {
-    return parseBooheeNutrition(data, fallbackName);
-  }
-  return null;
 }
 
 export async function enrichWithDatabase(
   result: RecognitionResult,
 ): Promise<RecognitionResult> {
   const enriched = await Promise.all(
-    result.foods.map(async (food) => {
+    result.foods.map(async (food: Food) => {
       const localHit = lookupBooheeCode(food.name);
       const resolvedCode = localHit?.code || food.boohee_code || "";
       const canonicalName = localHit?.canonicalName || food.name;
@@ -172,7 +160,7 @@ export async function enrichWithDatabase(
   return {
     ...result,
     foods: enriched,
-    total_calories: enriched.reduce((s, f) => s + f.total_calories, 0),
+    total_calories: enriched.reduce((s: number, f: Food) => s + f.total_calories, 0),
   };
 }
 

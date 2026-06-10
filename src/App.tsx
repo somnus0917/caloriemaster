@@ -1,34 +1,42 @@
 import { useCallback, useEffect, useState } from "react";
-import type { RecognitionResult, Record } from "./types";
+import type { Food, RecognitionResult, Record } from "./types";
 import { HomePage } from "./pages/HomePage";
 import { CameraPage } from "./pages/CameraPage";
 import { ConfirmPage } from "./pages/ConfirmPage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { AuthForm } from "./pages/AuthForm";
 import { TopNav } from "./components/layout/TopNav";
 import { BottomNav } from "./components/layout/BottomNav";
 import { LoadingOverlay } from "./components/common/LoadingOverlay";
 import { SetupModal } from "./components/common/SetupModal";
 import { ToastView } from "./components/common/Toast";
+import { MigrationPrompt } from "./components/common/MigrationPrompt";
 import { useRecords } from "./hooks/useRecords";
 import { useSettings } from "./hooks/useSettings";
 import { useToast } from "./hooks/useToast";
+import { useAuth } from "./hooks/useAuth";
 import { useRecognitionFlow } from "./hooks/useRecognitionFlow";
 import { downloadCSV } from "./utils/csv";
 import { calculateFoodCalories } from "./utils/validation";
+import { hasPendingMigration } from "./services/migrate";
 
 type Screen = "home" | "camera" | "confirm" | "history";
+type AuthMode = "login" | "register";
 
 export function App() {
-  const { records, addRecord, updateRecord, removeRecord, restoreRecord, seedDemoIfEmpty } =
-    useRecords();
+  const auth = useAuth();
+  const records = useRecords();
   const { settings, update: updateSettings } = useSettings();
   const { toasts, showError, showToast, showUndo, dismiss } = useToast();
 
   const [screen, setScreen] = useState<Screen>("home");
   const [setupOpen, setSetupOpen] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
+  const [showMigration, setShowMigration] = useState(false);
 
   const recognitionFlow = useRecognitionFlow({
     onError: (message) => showError(message),
+    onNoFood: () => showError("没有识别到食物，请重新拍摄"),
   });
   const {
     recognition,
@@ -60,14 +68,22 @@ export function App() {
     return () => window.removeEventListener("load", onLoad);
   }, []);
 
+  // When the user becomes authenticated, see if they have legacy
+  // localStorage data to import.
+  useEffect(() => {
+    if (auth.status === "authenticated" && hasPendingMigration()) {
+      setShowMigration(true);
+    }
+  }, [auth.status]);
+
   const handleImagePicked = useCallback(
     async (image: { recognize: string; thumbnail: string | null }) => {
       if (isBusy) return;
-      await startRecognition(image.recognize, image.thumbnail);
-      // After the async call settles, only navigate if it succeeded.
-      // (Errors are surfaced via onError; the hook leaves recognition
-      // state empty on failure.)
-      setScreen("confirm");
+      const ok = await startRecognition(image.recognize, image.thumbnail);
+      if (ok) {
+        setScreen("confirm");
+      }
+      // On failure, stay on the camera page so the user can retry.
     },
     [isBusy, startRecognition],
   );
@@ -75,32 +91,33 @@ export function App() {
   const handleDemo = useCallback(() => {
     if (isBusy) return;
     setSetupOpen(false);
-    if (records.length === 0) {
-      const seeded = seedDemoIfEmpty();
+    void records.seedDemoIfEmpty().then((seeded) => {
       if (seeded) showToast("已为你生成 7 天演示数据，方便看趋势图");
-    }
-    loadDemo();
-    setScreen("confirm");
-  }, [isBusy, records.length, seedDemoIfEmpty, showToast, loadDemo]);
+      loadDemo();
+      setScreen("confirm");
+    });
+  }, [isBusy, records, showToast, loadDemo]);
 
   const handleEdit = useCallback(
     (id: string) => {
-      const record = records.find((r) => r.id === id);
+      const record = records.records.find((r) => r.id === id);
       if (!record) return;
       beginEdit(record);
       setScreen("confirm");
     },
-    [records, beginEdit],
+    [records.records, beginEdit],
   );
 
   const handleDelete = useCallback(
     (id: string) => {
-      const record = records.find((r) => r.id === id);
-      if (!record) return;
-      removeRecord(id);
-      showUndo("记录已删除", () => restoreRecord(record));
+      void records.removeRecord(id).then((removed) => {
+        if (!removed) return;
+        showUndo("记录已删除", () => {
+          void records.restoreRecord(removed);
+        });
+      });
     },
-    [records, removeRecord, restoreRecord, showUndo],
+    [records, showUndo],
   );
 
   const handleSave = useCallback(() => {
@@ -108,33 +125,28 @@ export function App() {
       showError("没有可保存的识别结果");
       return;
     }
-    if (!recognition.result.foods.length) {
+    if (recognition.result.foods.length === 0) {
       showError("没有可保存的识别结果");
       return;
     }
-    try {
-      // Read `editingId` BEFORE we reset state so the toast message
-      // accurately reflects whether we updated or created a record.
-      const wasEditing = editingId !== null;
-      const { result, weights, thumbnailUrl } = recognition;
-      if (wasEditing && editingId) {
-        const updated = updateRecord(editingId, result.foods, weights);
-        if (updated) {
-          showToast("记录已更新");
-        }
-      } else {
-        // SECURITY: pass ONLY the small thumbnail. The full
-        // recognition image is intentionally not persisted — see
-        // docs in storage/records.ts.
-        addRecord(result.foods, weights, thumbnailUrl);
-        showToast("已保存到今日记录");
-      }
-      resetRecognition();
-      setScreen("home");
-    } catch (error) {
-      showError((error as Error).message || "保存失败");
-    }
-  }, [recognition, editingId, updateRecord, addRecord, showToast, showError, resetRecognition]);
+    const wasEditing = editingId !== null;
+    const { result, weights, thumbnailUrl } = recognition;
+    const promise = wasEditing && editingId
+      ? records.updateRecord(editingId, result.foods as Food[], weights).then((r) => (r ? "updated" : null))
+      : records
+          .addRecord(result.foods as Food[], weights, thumbnailUrl)
+          .then(() => "created");
+    promise
+      .then((status) => {
+        if (status === "updated") showToast("记录已更新");
+        if (status === "created") showToast("已保存到今日记录");
+        resetRecognition();
+        setScreen("home");
+      })
+      .catch((err: Error) => {
+        showError(err.message || "保存失败");
+      });
+  }, [recognition, editingId, records, showToast, showError, resetRecognition]);
 
   const handleCancelConfirm = useCallback(() => {
     resetRecognition();
@@ -142,13 +154,53 @@ export function App() {
   }, [resetRecognition]);
 
   const handleExport = useCallback(() => {
-    if (!records.length) {
+    if (!records.records.length) {
       showToast("暂无记录可导出");
       return;
     }
-    downloadCSV(records);
-    showToast(`已导出 ${records.length} 条记录`);
-  }, [records, showToast]);
+    downloadCSV(records.records);
+    showToast(`已导出 ${records.records.length} 条记录`);
+  }, [records.records, showToast]);
+
+  const handleLogout = useCallback(async () => {
+    await auth.logout();
+    setScreen("home");
+  }, [auth]);
+
+  // ---- Render branches ----
+
+  if (auth.status === "loading") {
+    return (
+      <div className="app-shell">
+        <div className="boot-screen">
+          <div className="spinner" />
+          <p>加载中...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (auth.status === "unauthenticated") {
+    return (
+      <div className="app-shell">
+        <AuthForm
+          mode={authMode}
+          onSwitch={() => setAuthMode((m) => (m === "login" ? "register" : "login"))}
+        />
+      </div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="app-shell">
+        <div className="boot-screen">
+          <div className="spinner" />
+          <p>加载设置...</p>
+        </div>
+      </div>
+    );
+  }
 
   const isFullFlow = screen === "camera" || screen === "confirm";
   const totalForConfirm = recognition
@@ -169,7 +221,7 @@ export function App() {
 
       {screen === "home" && (
         <HomePage
-          records={records}
+          records={records.records}
           settings={settings}
           onGoCamera={() => setScreen("camera")}
           onGoHistory={() => setScreen("history")}
@@ -202,7 +254,7 @@ export function App() {
       )}
       {screen === "history" && (
         <HistoryPage
-          records={records as Record[]}
+          records={records.records}
           onEdit={handleEdit}
           onDelete={handleDelete}
           onBack={() => setScreen("home")}
@@ -218,10 +270,23 @@ export function App() {
       <SetupModal
         open={setupOpen}
         settings={settings}
-        onSave={updateSettings}
+        onSave={(s) => {
+          void updateSettings(s);
+        }}
         onClose={() => setSetupOpen(false)}
         onDemo={handleDemo}
+        onLogout={handleLogout}
       />
+
+      {showMigration ? (
+        <MigrationPrompt
+          onDone={() => {
+            setShowMigration(false);
+            void records.reload();
+          }}
+          onSkip={() => setShowMigration(false)}
+        />
+      ) : null}
 
       <div id="toast-container" aria-live="polite">
         {toasts.map((t) => (
@@ -233,3 +298,6 @@ export function App() {
     </div>
   );
 }
+
+// Suppress TS unused-var check when Record is only used in the type tree.
+void (null as unknown as Record);

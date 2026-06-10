@@ -17,6 +17,6 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vitest/globals", "node"]
   },
-  "include": ["src", "tests", "server/validation.d.ts", "vite.config.ts", "vitest.config.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src", "tests", "drizzle.config.ts", "vite.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist", "dist-server", "migrations"]
 }
