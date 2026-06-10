@@ -1,2 +1,17 @@
+# Dependencies
+node_modules
+dist
+.DS_Store
+*.log
+
+# Local env / secrets (never commit)
 .env
-env-config.js
+.env.local
+.env.*.local
+
+# Vite-generated env types
+src/vite-env.d.ts.bak
+
+# Test artifacts
+coverage
+.vitest-cache

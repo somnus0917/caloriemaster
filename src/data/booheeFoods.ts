@@ -1,20 +1,9 @@
-/**
- * 薄荷食物 code 本地映射表 + 命中辅助函数
- *
- * 背景：薄荷新版开放平台（api.boohee.com）只暴露 /v1/food/detail 接口，
- * 没有公开的 search 接口；而 AI（Qwen-VL）并不知道薄荷内部的 code 体系，
- * 不会主动返回正确的 code，所以"AI 返回 code → 查详情"这条路径命中率极低。
- *
- * 折中方案：在前端内置一份常见食物的标准名 → 薄荷 code 映射，配合 AI prompt
- * 让它尽量返回这张表里的标准名称。命中后直接拿 code 查详情，能稳定拿到
- * 热量、营养素、红绿灯、薄荷缩略图。未命中则保留 AI 估算值并标注"未命中数据库"。
- *
- * 这张表覆盖的是中国饮食里最常见的 80+ 种主食、菜肴、肉蛋、蔬果、零食。
- * 冷门食物（地方菜、特定品牌、新品）大概率还是命中不了，需要后续手动扩展。
- */
+export interface BooheeFood {
+  code: string;
+  name: string;
+}
 
-window.BOOHEE_FOODS = [
-  // 主食
+export const BOOHEE_FOODS: BooheeFood[] = [
   { code: "food_1001001", name: "米饭" },
   { code: "food_1001002", name: "白米饭" },
   { code: "food_1001003", name: "糙米饭" },
@@ -40,8 +29,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1001023", name: "燕麦片" },
   { code: "food_1001024", name: "煎饼" },
   { code: "food_1001025", name: "烧饼" },
-
-  // 肉类
   { code: "food_1002001", name: "鸡胸肉" },
   { code: "food_1002002", name: "鸡腿" },
   { code: "food_1002003", name: "鸡翅" },
@@ -65,8 +52,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1002021", name: "烤鸭" },
   { code: "food_1002022", name: "羊肉" },
   { code: "food_1002023", name: "羊肉串" },
-
-  // 海鲜水产
   { code: "food_1003001", name: "鱼" },
   { code: "food_1003002", name: "清蒸鱼" },
   { code: "food_1003003", name: "红烧鱼" },
@@ -79,8 +64,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1003010", name: "鱿鱼" },
   { code: "food_1003011", name: "蛤蜊" },
   { code: "food_1003012", name: "扇贝" },
-
-  // 蔬菜
   { code: "food_1004001", name: "白菜" },
   { code: "food_1004002", name: "青菜" },
   { code: "food_1004003", name: "生菜" },
@@ -99,8 +82,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1004016", name: "豆腐干" },
   { code: "food_1004017", name: "蘑菇" },
   { code: "food_1004018", name: "香菇" },
-
-  // 水果
   { code: "food_1005001", name: "苹果" },
   { code: "food_1005002", name: "香蕉" },
   { code: "food_1005003", name: "橙子" },
@@ -114,8 +95,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1005011", name: "菠萝" },
   { code: "food_1005012", name: "梨" },
   { code: "food_1005013", name: "桃" },
-
-  // 乳制品 / 饮料 / 零食
   { code: "food_1006001", name: "牛奶" },
   { code: "food_1006002", name: "酸奶" },
   { code: "food_1006003", name: "豆浆" },
@@ -131,8 +110,6 @@ window.BOOHEE_FOODS = [
   { code: "food_1006013", name: "冰淇淋" },
   { code: "food_1006014", name: "坚果" },
   { code: "food_1006015", name: "花生" },
-
-  // 中式菜肴（常见命名）
   { code: "food_1007001", name: "宫保鸡丁" },
   { code: "food_1007002", name: "麻婆豆腐" },
   { code: "food_1007003", name: "鱼香肉丝" },
@@ -149,33 +126,34 @@ window.BOOHEE_FOODS = [
   { code: "food_1007014", name: "辣子鸡" },
 ];
 
+export interface LookupHit {
+  code: string;
+  canonicalName: string;
+}
+
 /**
- * 根据 AI 返回的食物名去映射表里查 code。
- * 命中策略：精确匹配优先；否则去掉常见后缀（饭、菜、面）后做 contains 匹配。
- * 返回 { code, canonicalName } 或 null。
+ * Match an AI-returned food name to a local Boohee code.
+ * Strategy:
+ *  1) exact match
+ *  2) strip common suffixes (饭|菜|面|汤) and exact match
+ *  3) contains match (table item is a substring of the input)
  */
-window.lookupBooheeCode = function (rawName) {
+export function lookupBooheeCode(rawName: string | null | undefined): LookupHit | null {
   if (!rawName) return null;
   const target = String(rawName).trim();
-  const table = window.BOOHEE_FOODS || [];
+  if (!target) return null;
 
-  // 1) 精确匹配
-  const exact = table.find((f) => f.name === target);
+  const exact = BOOHEE_FOODS.find((f) => f.name === target);
   if (exact) return { code: exact.code, canonicalName: exact.name };
 
-  // 2) 去掉常见后缀再精确匹配
   const stripped = target.replace(/(饭|菜|面|汤)$/, "");
   if (stripped !== target) {
-    const s = table.find((f) => f.name === stripped);
+    const s = BOOHEE_FOODS.find((f) => f.name === stripped);
     if (s) return { code: s.code, canonicalName: s.name };
   }
 
-  // 3) 表项名出现在目标名里（短名包含），例如 "西红柿炒鸡蛋" 包含 "西红柿"
-  const contains = table.find((f) => target.includes(f.name));
+  const contains = BOOHEE_FOODS.find((f) => target.includes(f.name));
   if (contains) return { code: contains.code, canonicalName: contains.name };
 
-  // 4) 目标名出现在表项名里（表项名是目标名的细化），例如目标 "白菜" 命中表项 "白菜"
-  // 第一步已经处理，跳过以避免过宽
-
   return null;
-};
+}
