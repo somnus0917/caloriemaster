@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Food, RecognitionResult, Record } from "./types";
+import type { RecognitionResult, Record } from "./types";
 import { HomePage } from "./pages/HomePage";
 import { CameraPage } from "./pages/CameraPage";
 import { ConfirmPage } from "./pages/ConfirmPage";
@@ -12,34 +12,11 @@ import { ToastView } from "./components/common/Toast";
 import { useRecords } from "./hooks/useRecords";
 import { useSettings } from "./hooks/useSettings";
 import { useToast } from "./hooks/useToast";
-import { enrichWithDatabase } from "./services/boohee";
-import { recognizeFood } from "./services/qwen";
+import { useRecognitionFlow } from "./hooks/useRecognitionFlow";
 import { downloadCSV } from "./utils/csv";
 import { calculateFoodCalories } from "./utils/validation";
-import { DEMO_RECOGNITION } from "./data/demoData";
-import { normalizeAiResult } from "./services/qwen";
 
 type Screen = "home" | "camera" | "confirm" | "history";
-
-interface RecognitionState {
-  result: RecognitionResult;
-  weights: number[];
-  aiWeights: number[];
-  imageDataUrl: string | null;
-  thumbnailUrl: string | null;
-  note: string;
-}
-
-function describeError(message: string): string {
-  if (message.includes("超时")) return message;
-  if (message.includes("401") || message.includes("403"))
-    return "API Key 无效或无权限，请检查配置";
-  if (message.includes("429")) return "请求过于频繁，请稍后再试";
-  if (message.includes("格式异常")) return "AI 返回异常，请重试";
-  if (message.includes("Network") || message.includes("Failed"))
-    return "网络错误，请检查连接后重试";
-  return message || "识别失败，请重试";
-}
 
 export function App() {
   const { records, addRecord, updateRecord, removeRecord, restoreRecord, seedDemoIfEmpty } =
@@ -49,9 +26,21 @@ export function App() {
 
   const [screen, setScreen] = useState<Screen>("home");
   const [setupOpen, setSetupOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [recognition, setRecognition] = useState<RecognitionState | null>(null);
-  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const recognitionFlow = useRecognitionFlow({
+    onError: (message) => showError(message),
+  });
+  const {
+    recognition,
+    editingId,
+    status,
+    isBusy,
+    startRecognition,
+    loadDemo,
+    beginEdit,
+    changeWeight,
+    reset: resetRecognition,
+  } = recognitionFlow;
 
   useEffect(() => {
     if (screen === "home" || screen === "history") {
@@ -71,77 +60,37 @@ export function App() {
     return () => window.removeEventListener("load", onLoad);
   }, []);
 
-  const startRecognition = useCallback(
-    async (imageBase64: string, thumbnail: string | null) => {
-      setLoading(true);
-      try {
-        let result = await recognizeFood({ imageBase64 });
-        result = await enrichWithDatabase(result);
-        setRecognition({
-          result,
-          weights: result.foods.map((f) => f.weight_g),
-          aiWeights: result.foods.map((f) => f.weight_g),
-          imageDataUrl: imageBase64,
-          thumbnailUrl: thumbnail,
-          note: result.note || "",
-        });
-        setEditingId(null);
-        setScreen("confirm");
-      } catch (error) {
-        showError(describeError((error as Error).message));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [showError],
-  );
-
   const handleImagePicked = useCallback(
     async (image: { recognize: string; thumbnail: string | null }) => {
+      if (isBusy) return;
       await startRecognition(image.recognize, image.thumbnail);
+      // After the async call settles, only navigate if it succeeded.
+      // (Errors are surfaced via onError; the hook leaves recognition
+      // state empty on failure.)
+      setScreen("confirm");
     },
-    [startRecognition],
+    [isBusy, startRecognition],
   );
 
   const handleDemo = useCallback(() => {
+    if (isBusy) return;
     setSetupOpen(false);
     if (records.length === 0) {
       const seeded = seedDemoIfEmpty();
       if (seeded) showToast("已为你生成 7 天演示数据，方便看趋势图");
     }
-    const normalized = normalizeAiResult(DEMO_RECOGNITION);
-    setRecognition({
-      result: normalized,
-      weights: normalized.foods.map((f) => f.weight_g),
-      aiWeights: normalized.foods.map((f) => f.weight_g),
-      imageDataUrl: null,
-      thumbnailUrl: null,
-      note: normalized.note || "演示数据用于体验克重调整和保存流程，未调用真实 API。",
-    });
-    setEditingId(null);
+    loadDemo();
     setScreen("confirm");
-  }, [records.length, seedDemoIfEmpty, showToast]);
+  }, [isBusy, records.length, seedDemoIfEmpty, showToast, loadDemo]);
 
   const handleEdit = useCallback(
     (id: string) => {
       const record = records.find((r) => r.id === id);
       if (!record) return;
-      setEditingId(id);
-      setRecognition({
-        result: {
-          foods: record.foods.map((f) => ({ ...f })),
-          total_calories: record.totalCalories,
-          note: `正在编辑：${record.mealType} ${new Date(record.timestamp).toLocaleString("zh-CN")}`,
-        },
-        weights: record.foods.map((f) => f.weight_g),
-        aiWeights: record.foods.map((f) => f.weight_g),
-        imageDataUrl: null,
-        thumbnailUrl: record.thumbnailUrl,
-        note: `正在编辑：${record.mealType} ${new Date(record.timestamp).toLocaleString("zh-CN")}`,
-      });
+      beginEdit(record);
       setScreen("confirm");
     },
-    [records],
+    [records, beginEdit],
   );
 
   const handleDelete = useCallback(
@@ -159,44 +108,38 @@ export function App() {
       showError("没有可保存的识别结果");
       return;
     }
-    const { result, weights, thumbnailUrl, imageDataUrl } = recognition;
-    if (!result.foods.length) {
+    if (!recognition.result.foods.length) {
       showError("没有可保存的识别结果");
       return;
     }
     try {
-      // Important: read `editingId` BEFORE we mutate state so the toast
-      // message accurately reflects whether we updated or created a record.
+      // Read `editingId` BEFORE we reset state so the toast message
+      // accurately reflects whether we updated or created a record.
       const wasEditing = editingId !== null;
+      const { result, weights, thumbnailUrl } = recognition;
       if (wasEditing && editingId) {
-        const updated = updateRecord(editingId, result.foods as Food[], weights);
+        const updated = updateRecord(editingId, result.foods, weights);
         if (updated) {
           showToast("记录已更新");
         }
       } else {
-        addRecord(
-          result.foods as Food[],
-          weights,
-          thumbnailUrl ?? (imageDataUrl ? imageDataUrl : null),
-        );
+        // SECURITY: pass ONLY the small thumbnail. The full
+        // recognition image is intentionally not persisted — see
+        // docs in storage/records.ts.
+        addRecord(result.foods, weights, thumbnailUrl);
         showToast("已保存到今日记录");
       }
-      setRecognition(null);
-      setEditingId(null);
+      resetRecognition();
       setScreen("home");
     } catch (error) {
       showError((error as Error).message || "保存失败");
     }
-  }, [recognition, editingId, updateRecord, addRecord, showToast, showError]);
+  }, [recognition, editingId, updateRecord, addRecord, showToast, showError, resetRecognition]);
 
-  const handleWeightChange = useCallback((index: number, weight: number) => {
-    setRecognition((prev) => {
-      if (!prev) return prev;
-      const next = prev.weights.slice();
-      next[index] = weight;
-      return { ...prev, weights: next };
-    });
-  }, []);
+  const handleCancelConfirm = useCallback(() => {
+    resetRecognition();
+    setScreen("camera");
+  }, [resetRecognition]);
 
   const handleExport = useCallback(() => {
     if (!records.length) {
@@ -245,16 +188,16 @@ export function App() {
       )}
       {screen === "confirm" && (
         <ConfirmPage
-          result={recognition?.result ?? null}
+          result={(recognition?.result as RecognitionResult) ?? null}
           weights={recognition?.weights ?? []}
           aiWeights={recognition?.aiWeights ?? []}
           imageDataUrl={recognition?.imageDataUrl ?? null}
           note={recognition?.note ?? ""}
           editing={editingId !== null}
-          saving={loading}
-          onWeightChange={handleWeightChange}
+          saving={isBusy}
+          onWeightChange={changeWeight}
           onSave={handleSave}
-          onBack={() => setScreen("camera")}
+          onBack={handleCancelConfirm}
         />
       )}
       {screen === "history" && (
@@ -270,7 +213,7 @@ export function App() {
         <BottomNav onHome={() => setScreen("home")} onHistory={() => setScreen("history")} />
       </div>
 
-      <LoadingOverlay show={loading} />
+      <LoadingOverlay show={isBusy} stage={status} />
 
       <SetupModal
         open={setupOpen}

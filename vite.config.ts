@@ -14,8 +14,14 @@ function apiProxyPlugin(): Plugin {
       const hasQwen = Boolean(env.QWEN_API_KEY);
       const hasBoohee = Boolean(env.BOOHEE_API_KEY);
       server.middlewares.use(async (req, res, next) => {
-        const url = req.url || "";
-        if (url.startsWith("/api/qwen") || url.startsWith("/api/boohee")) {
+        const raw = req.url || "/";
+        const qIndex = raw.indexOf("?");
+        const pathname = qIndex === -1 ? raw : raw.slice(0, qIndex);
+        if (
+          pathname === "/api/recognize-food" ||
+          pathname === "/api/boohee" ||
+          pathname.startsWith("/api/")
+        ) {
           await api(req, res);
           return;
         }

@@ -2,27 +2,44 @@
  * CalorieMaster API proxy.
  *
  * Reads API keys from the local .env file (which is .gitignored) and
- * forwards Qwen / 薄荷 calls so the browser never has to see the keys.
+ * forwards the food-recognition call to Qwen, plus the optional
+ * 薄荷 (Boohee) detail lookup. The browser never sees the keys.
  *
  * Used by:
  *   - server/server.cjs (production preview)
  *   - vite.config.ts (development server plugin)
  *
  * Endpoints:
- *   POST /api/qwen     body: { messages, response_format? }
+ *   POST /api/recognize-food   body: { imageBase64: "data:image/...;base64,..." }
  *   GET  /api/boohee?code=xxx
  *
- * The browser only talks to /api/* on its own origin, so the keys are
- * never embedded in the JS bundle and never leave the server process.
+ * SECURITY BOUNDARY
+ * -----------------
+ *  - The browser can ONLY influence the food-recognition request by
+ *    sending an image. Model name, system prompt, generation params
+ *    and message structure are fixed in this file (and in
+ *    server/validation.cjs).
+ *  - The browser cannot trigger arbitrary Qwen calls. The previous
+ *    generic /api/qwen proxy has been removed.
+ *  - The browser cannot set messages, prompt, or model name.
+ *  - There is NO authentication or rate limit on /api/*. See README
+ *    for deployment guidance.
  */
 
 const fs = require("node:fs");
 const path = require("node:path");
 const { URL } = require("node:url");
+const {
+  MAX_BODY_BYTES,
+  parseImageDataUrl,
+  validateRecognizeBody,
+  buildUpstreamRequest,
+  DEFAULT_QWEN_MODEL,
+  DEFAULT_SYSTEM_PROMPT,
+} = require("./validation.cjs");
 
 const DEFAULT_QWEN_API_URL =
   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-const DEFAULT_QWEN_MODEL = "qwen3-vl-flash";
 const DEFAULT_BOOHEE_API_URL = "https://api.boohee.com";
 const FETCH_TIMEOUT_MS = 30000;
 
@@ -54,16 +71,8 @@ function readEnv() {
   return { ...file, ...process.env };
 }
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
 function sendJson(res, status, payload) {
+  if (res.writableEnded || res.destroyed) return;
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
@@ -72,59 +81,113 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-function pipeUpstream(res, upstreamRes) {
-  const contentType =
-    upstreamRes.headers.get("content-type") || "application/json; charset=utf-8";
-  res.writeHead(upstreamRes.status, {
-    "Content-Type": contentType,
-    "Cache-Control": "no-store",
-    "X-Content-Type-Options": "nosniff",
+function sendError(res, status, code, message) {
+  sendJson(res, status, { error: { code, message } });
+}
+
+function readBodyWithLimit(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let received = 0;
+    let aborted = false;
+    req.on("data", (chunk) => {
+      if (aborted) return;
+      received += chunk.length;
+      if (received > maxBytes) {
+        aborted = true;
+        // We can't reliably write a response after destroying the
+        // socket, so resolve with a typed error and let the handler
+        // emit the JSON response before the connection is torn down.
+        req.removeAllListeners("end");
+        req.removeAllListeners("error");
+        req.resume();
+        // Best-effort: stop accepting further bytes.
+        try { req.pause(); } catch { /* noop */ }
+        resolve({
+          ok: false,
+          code: "PAYLOAD_TOO_LARGE",
+          message: "上传图片过大，请重新选择或压缩图片",
+        });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => {
+      if (aborted) return;
+      resolve({ ok: true, body: Buffer.concat(chunks) });
+    });
+    req.on("error", (err) => reject(err));
   });
-  return upstreamRes.arrayBuffer().then((buf) => res.end(Buffer.from(buf)));
 }
 
 function createApiRouter(env) {
   const qwenKey = env.QWEN_API_KEY || "";
   const qwenUrl = env.QWEN_API_URL || DEFAULT_QWEN_API_URL;
   const qwenModel = env.QWEN_MODEL || DEFAULT_QWEN_MODEL;
+  const systemPrompt = env.SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
   const booheeKey = env.BOOHEE_API_KEY || "";
   const booheeBase = env.BOOHEE_API_URL || DEFAULT_BOOHEE_API_URL;
 
-  async function handleQwen(req, res) {
+  // Pathname helper. The router only matches exact pathnames — no more
+  // startsWith — so /api/recognize-food-anything or /api/qwen-extra
+  // fall through to a 404.
+  function getPathname(req) {
+    const raw = req.url || "/";
+    // req.url is always a path + query on the local proxy server.
+    const qIndex = raw.indexOf("?");
+    return qIndex === -1 ? raw : raw.slice(0, qIndex);
+  }
+
+  async function handleRecognizeFood(req, res) {
     if (req.method !== "POST") {
-      sendJson(res, 405, { error: "Method not allowed" });
+      sendError(res, 405, "METHOD_NOT_ALLOWED", "仅支持 POST 请求");
+      return true;
+    }
+    const contentType = String(req.headers["content-type"] || "").toLowerCase();
+    if (!contentType.startsWith("application/json")) {
+      sendError(res, 415, "UNSUPPORTED_MEDIA", "Content-Type 必须为 application/json");
       return true;
     }
     if (!qwenKey) {
-      sendJson(res, 503, {
-        error:
-          "QWEN_API_KEY not configured. Add it to .env on the server (file is gitignored).",
-      });
+      sendError(
+        res,
+        503,
+        "QWEN_NOT_CONFIGURED",
+        "服务端未配置 QWEN_API_KEY，请在 .env 中填写后重启服务",
+      );
       return true;
     }
-    let raw;
+    let bodyResult;
     try {
-      raw = await readBody(req);
+      bodyResult = await readBodyWithLimit(req, MAX_BODY_BYTES);
     } catch (err) {
-      sendJson(res, 400, { error: "Failed to read request body" });
+      sendError(res, 400, "INVALID_REQUEST", "请求体读取失败");
+      return true;
+    }
+    if (!bodyResult.ok) {
+      sendError(res, 413, bodyResult.code, bodyResult.message);
       return true;
     }
     let payload;
     try {
-      payload = JSON.parse(raw.toString("utf8") || "{}");
+      const text = bodyResult.body.toString("utf8") || "{}";
+      payload = JSON.parse(text);
     } catch (err) {
-      sendJson(res, 400, { error: "Invalid JSON body" });
+      sendError(res, 400, "INVALID_REQUEST", "请求体不是合法 JSON");
       return true;
     }
-    if (!Array.isArray(payload.messages) || payload.messages.length === 0) {
-      sendJson(res, 400, { error: "Missing 'messages' array" });
+    const validation = validateRecognizeBody(payload);
+    if (!validation.ok) {
+      const status = validation.code === "UNSUPPORTED_MEDIA" ? 415 : 400;
+      sendError(res, status, validation.code, validation.message);
       return true;
     }
-    const body = {
-      model: qwenModel,
-      messages: payload.messages,
-      ...(payload.response_format ? { response_format: payload.response_format } : {}),
-    };
+    const upstreamBody = buildUpstreamRequest(
+      `data:${validation.mime};base64,${validation.base64}`,
+      { QWEN_MODEL: qwenModel, SYSTEM_PROMPT: systemPrompt },
+    );
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
     let upstream;
     try {
       upstream = await fetch(qwenUrl, {
@@ -133,38 +196,76 @@ function createApiRouter(env) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${qwenKey}`,
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        body: JSON.stringify(upstreamBody),
+        signal: ac.signal,
       });
     } catch (err) {
-      sendJson(res, 502, { error: `Upstream error: ${err.message}` });
+      clearTimeout(timer);
+      const isTimeout = err && err.name === "AbortError";
+      if (isTimeout) {
+        sendError(res, 504, "UPSTREAM_TIMEOUT", "AI 服务超时，请稍后再试");
+      } else {
+        sendError(res, 502, "UPSTREAM_ERROR", "AI 服务暂时不可用，请稍后再试");
+      }
       return true;
     }
-    await pipeUpstream(res, upstream);
+    clearTimeout(timer);
+
+    // Always extract the model content and return only that — never
+    // leak upstream headers, error bodies, or the key to the browser.
+    let upstreamJson;
+    try {
+      upstreamJson = await upstream.json();
+    } catch (err) {
+      sendError(res, 502, "UPSTREAM_ERROR", "AI 服务返回数据无法解析");
+      return true;
+    }
+    if (!upstream.ok) {
+      const status = upstream.status === 401 || upstream.status === 403 ? 502 : 502;
+      sendError(res, status, "UPSTREAM_ERROR", "AI 服务返回错误");
+      return true;
+    }
+    const content =
+      upstreamJson &&
+      upstreamJson.choices &&
+      upstreamJson.choices[0] &&
+      upstreamJson.choices[0].message &&
+      typeof upstreamJson.choices[0].message.content === "string"
+        ? upstreamJson.choices[0].message.content
+        : "";
+    if (!content) {
+      sendError(res, 502, "UPSTREAM_ERROR", "AI 服务未返回识别结果");
+      return true;
+    }
+    sendJson(res, 200, { content });
     return true;
   }
 
   async function handleBoohee(req, res) {
     if (req.method !== "GET") {
-      sendJson(res, 405, { error: "Method not allowed" });
+      sendError(res, 405, "METHOD_NOT_ALLOWED", "仅支持 GET 请求");
       return true;
     }
     if (!booheeKey) {
-      sendJson(res, 503, {
-        error:
-          "BOOHEE_API_KEY not configured. Add it to .env on the server (file is gitignored).",
-      });
+      sendError(
+        res,
+        503,
+        "BOOHEE_NOT_CONFIGURED",
+        "服务端未配置 BOOHEE_API_KEY",
+      );
       return true;
     }
     const url = new URL(req.url, "http://localhost");
     const code = url.searchParams.get("code");
     if (!code) {
-      sendJson(res, 400, { error: "Missing 'code' query parameter" });
+      sendError(res, 400, "INVALID_REQUEST", "缺少 code 查询参数");
       return true;
     }
     const target = `${booheeBase}/v1/food/detail?code=${encodeURIComponent(
       code,
     )}&with_units=true&with_materials=true`;
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), FETCH_TIMEOUT_MS);
     let upstream;
     try {
       upstream = await fetch(target, {
@@ -173,20 +274,31 @@ function createApiRouter(env) {
           "X-Api-Key": booheeKey,
           "Content-Type": "application/json",
         },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: ac.signal,
       });
     } catch (err) {
-      sendJson(res, 502, { error: `Upstream error: ${err.message}` });
+      clearTimeout(timer);
+      const isTimeout = err && err.name === "AbortError";
+      if (isTimeout) {
+        sendError(res, 504, "UPSTREAM_TIMEOUT", "营养数据库超时");
+      } else {
+        sendError(res, 502, "UPSTREAM_ERROR", "营养数据库暂时不可用");
+      }
       return true;
     }
-    await pipeUpstream(res, upstream);
+    clearTimeout(timer);
+    sendJson(res, upstream.status, await upstream.json().catch(() => ({})));
     return true;
   }
 
   return async function handle(req, res) {
-    const url = req.url || "";
-    if (url.startsWith("/api/qwen")) return handleQwen(req, res);
-    if (url.startsWith("/api/boohee")) return handleBoohee(req, res);
+    const pathname = getPathname(req);
+    if (pathname === "/api/recognize-food") return handleRecognizeFood(req, res);
+    if (pathname === "/api/boohee") return handleBoohee(req, res);
+    if (pathname.startsWith("/api/")) {
+      sendError(res, 404, "ROUTE_NOT_FOUND", "接口不存在");
+      return true;
+    }
     return false;
   };
 }

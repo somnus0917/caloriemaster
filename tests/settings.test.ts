@@ -17,16 +17,6 @@ describe("settings storage", () => {
     const s = loadSettings();
     expect(s.dailyGoal).toBe(2000);
     expect(s.dailyLimit).toBe(2300);
-    expect(s.qwenApiKey).toBe("");
-    expect(s.booheeApiKey).toBe("");
-  });
-
-  it("stores and reloads API keys", () => {
-    saveSettings({ qwenApiKey: "sk-test-qwen" });
-    saveSettings({ booheeApiKey: "sk-boohee" });
-    const s = loadSettings();
-    expect(s.qwenApiKey).toBe("sk-test-qwen");
-    expect(s.booheeApiKey).toBe("sk-boohee");
   });
 
   it("clamps goal and limit to safe ranges", () => {
@@ -41,5 +31,13 @@ describe("settings storage", () => {
     saveSettings({ dailyLimit: 99999 });
     const s3 = loadSettings();
     expect(s3.dailyLimit).toBe(8000);
+  });
+
+  it("does not store any API key in the browser", () => {
+    saveSettings({ dailyGoal: 1800 });
+    const keys = Object.keys(globalThis.localStorage);
+    for (const key of keys) {
+      expect(key).not.toMatch(/qwen_api_key|boohee_api_key|qwen|boohee/i);
+    }
   });
 });

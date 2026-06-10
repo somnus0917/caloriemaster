@@ -36,12 +36,8 @@ export interface Record {
 }
 
 export interface Settings {
-  qwenApiKey: string;
-  booheeApiKey: string;
   dailyGoal: number;
   dailyLimit: number;
-  qwenApiUrl: string;
-  qwenModel: string;
 }
 
 export type ScreenName = "home" | "camera" | "confirm" | "history";

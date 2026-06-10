@@ -8,44 +8,7 @@ import {
   sanitizeOptionalNumber,
   sanitizeWeight,
 } from "../utils/validation";
-import { fetchWithTimeout, mapHttpError } from "./http";
-
-const SYSTEM_PROMPT = `你是一个专业的营养分析助手，擅长从食物图片中准确识别食物种类并估算营养信息。
-
-当用户上传食物图片时，你需要：
-1. 识别图中所有可见食物
-2. 如果图中有参照物（手、筷子、碗、勺子等），利用参照物推算食物的实际尺寸和重量
-3. 估算每种食物的重量（克）
-4. 计算每种食物的热量
-
-参照物尺寸参考：
-- 成人手掌长 ≈ 18cm
-- 筷子长 ≈ 24cm
-- 标准碗口径 ≈ 14cm
-- 汤勺长 ≈ 5cm
-- 1元硬币直径 ≈ 2.5cm
-
-输出要求：
-- name 字段使用最常见的中文名称（不要带"一份""大概"等修饰词）
-  例如："白米饭" 而不是 "大概一碗米饭"
-- 常见食物尽量使用通用名称（米饭、面条、鸡蛋、苹果、白菜、牛奶、宫保鸡丁 等）
-
-必须以合法 JSON 格式输出，结构如下：
-{
-  "foods": [
-    {
-      "name": "食物名称（中文，使用常见标准名）",
-      "weight_g": 估算克重（数字，单位克）,
-      "calories_per_100g": 每100g热量（数字，单位kcal）,
-      "total_calories": 该食物总热量（数字，单位kcal）,
-      "boohee_code": "如果你非常确定对应薄荷食物 code，可填入；不确定则留空字符串",
-      "confidence": "high 或 med 或 low"
-    }
-  ],
-  "total_calories": 所有食物热量之和（数字）,
-  "note": "补充说明，如不确定的食物、估算依据等，没有则留空字符串"
-}
-不要在 JSON 外面输出任何解释文字。`;
+import { fetchWithTimeout, readApiError } from "./http";
 
 interface RawFood {
   name?: unknown;
@@ -111,9 +74,9 @@ export function normalizeAiResult(parsed: unknown): RecognitionResult {
 
 /**
  * Parse a JSON string from the model, optionally wrapped in a single
- * ```json ... ``` fence. The previous implementation used a greedy regex
- * which could swallow too much; this version prefers JSON.parse and only
- * strips the outermost fence.
+ * ```json ... ``` fence. The previous implementation used a greedy
+ * regex which could swallow too much; this version prefers JSON.parse
+ * and only strips the outermost fence.
  */
 export function parseAiContent(content: string): unknown {
   const trimmed = content.trim();
@@ -128,50 +91,35 @@ export interface RecognizeOptions {
 }
 
 /**
- * Call Qwen through the local /api/qwen proxy. The proxy holds the
- * QWEN_API_KEY (loaded from .env on the server) and forwards the request.
- * The browser never sees the key.
+ * Call the local food-recognition proxy. The browser sends ONLY the
+ * image; the system prompt, model name, and generation parameters are
+ * all fixed on the server side (see server/validation.cjs).
  */
 export async function recognizeFood({
   imageBase64,
   timeoutMs,
 }: RecognizeOptions): Promise<RecognitionResult> {
   const response = await fetchWithTimeout(
-    "/api/qwen",
+    "/api/recognize-food",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: [
-              { type: "image_url", image_url: { url: imageBase64 } },
-              { type: "text", text: "请分析这张食物图片，识别所有食物并估算热量。" },
-            ],
-          },
-        ],
-        response_format: { type: "json_object" },
-      }),
+      // IMPORTANT: the body intentionally has no other fields. Adding
+      // `messages`, `model`, `response_format`, etc. would not help
+      // — the server builds the upstream request from scratch and
+      // would simply ignore them. We still don't send them, to keep
+      // the wire contract minimal.
+      body: JSON.stringify({ imageBase64 }),
       timeoutMs,
     },
   );
 
   if (!response.ok) {
-    let body: { error?: { message?: string } } | undefined;
-    try {
-      body = (await response.json()) as { error?: { message?: string } };
-    } catch {
-      body = undefined;
-    }
-    throw mapHttpError(response.status, body);
+    throw await readApiError(response);
   }
 
-  const data = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const content = data.choices?.[0]?.message?.content;
+  const data = (await response.json()) as { content?: unknown };
+  const content = typeof data.content === "string" ? data.content : "";
   if (!content) {
     throw new Error("AI 返回格式异常");
   }

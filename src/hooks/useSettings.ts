@@ -17,12 +17,7 @@ export function useSettings(): UseSettingsReturn {
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
-      if (
-        e.key === "qwen_api_key" ||
-        e.key === "boohee_api_key" ||
-        e.key === "daily_goal" ||
-        e.key === "daily_limit"
-      ) {
+      if (e.key === "daily_goal" || e.key === "daily_limit") {
         setSettings(loadSettings());
       }
     };
