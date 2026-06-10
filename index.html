@@ -2,7 +2,13 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#3a8a3a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="description" content="拍照识别食物热量，薄荷数据库增强营养信息" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80'%3E%F0%9F%8D%82%3C/text%3E%3C/svg%3E" />
     <title>卡路里追踪</title>
     <style>
       :root {
@@ -790,6 +796,129 @@
         border-color: color-mix(in srgb, var(--c-red) 42%, var(--c-border));
       }
 
+      /* 撤销删除 toast：横向布局，按钮在右侧 */
+      .toast-undo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        pointer-events: auto;
+      }
+      .toast-undo-btn {
+        background: transparent;
+        border: 0.5px solid var(--c-green);
+        color: var(--c-green);
+        padding: 4px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .toast-undo-btn:hover {
+        background: color-mix(in srgb, var(--c-green) 12%, transparent);
+      }
+
+      /* 食物名首字头像（缩略图兜底） */
+      .thumb-letter {
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--c-green);
+        background: var(--c-bg3);
+      }
+
+      /* 演示数据标签 */
+      .demo-badge {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 1px 6px;
+        font-size: 10px;
+        background: color-mix(in srgb, var(--c-amber) 18%, transparent);
+        color: color-mix(in srgb, var(--c-amber) 70%, var(--c-text));
+        border-radius: 6px;
+        font-weight: 500;
+      }
+
+      /* 记录卡片操作按钮组 */
+      .record-actions {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 4px;
+      }
+      .record-btns {
+        display: flex;
+        gap: 4px;
+      }
+      .btn-sm {
+        padding: 4px 8px !important;
+        font-size: 11px !important;
+        border-radius: 6px !important;
+      }
+      .record-main {
+        min-width: 0; /* 防止 flex 子项溢出 */
+      }
+      .record-foods {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      /* 今日空状态（带引导） */
+      .empty-cta {
+        padding: 36px 18px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        border-style: solid;
+        background: var(--c-bg);
+      }
+      .empty-emoji {
+        font-size: 40px;
+        line-height: 1;
+      }
+      .empty-title {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--c-text);
+      }
+      .empty-hint {
+        font-size: 12px;
+        color: var(--c-muted);
+        margin-bottom: 6px;
+      }
+
+      /* 趋势图柱状图可点击反馈 */
+      .trend-bar {
+        cursor: pointer;
+      }
+      .trend-bar:hover rect:nth-child(2),
+      .trend-bar:focus-visible rect:nth-child(2) {
+        opacity: 1 !important;
+        filter: brightness(1.05);
+      }
+      .trend-bar:focus {
+        outline: none;
+      }
+      .trend-bar:focus-visible rect:nth-child(1) {
+        fill: color-mix(in srgb, var(--c-green) 12%, transparent);
+      }
+
+      /* setup modal 里的 key 输入行 */
+      .key-input-row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .key-input-row input {
+        flex: 1;
+      }
+      .key-input-row .key-toggle {
+        padding: 8px 10px;
+        font-size: 14px;
+        line-height: 1;
+      }
+
       .hidden {
         display: none !important;
       }
@@ -800,6 +929,15 @@
       <nav id="top-nav" class="top-nav">
         <div class="brand">卡路里追踪</div>
         <div class="nav-actions">
+          <button
+            class="icon-btn"
+            type="button"
+            onclick="exportCSV()"
+            title="导出 CSV"
+            aria-label="导出 CSV"
+          >
+            ⬇
+          </button>
           <button
             class="icon-btn"
             type="button"
@@ -950,6 +1088,7 @@
             </button>
             <div class="screen-title">确认克重</div>
             <button
+              id="confirm-save-btn"
               class="btn-ghost"
               type="button"
               onclick="saveCurrentRecord()"
@@ -1005,13 +1144,20 @@
         <h2>配置 API Key</h2>
         <p>输入通义千问与薄荷开放平台配置</p>
         <label for="qwen-key-input">Qwen API Key</label>
-        <input type="password" id="qwen-key-input" placeholder="sk-..." />
+        <div class="key-input-row">
+          <input type="password" id="qwen-key-input" placeholder="sk-..." autocomplete="off" />
+          <button type="button" class="btn-ghost key-toggle" data-target="qwen-key-input" title="显示/隐藏">👁</button>
+        </div>
         <label for="boohee-key-input">薄荷 X-Api-Key（推荐）</label>
-        <input
-          type="password"
-          id="boohee-key-input"
-          placeholder="用于 /v1/food/detail"
-        />
+        <div class="key-input-row">
+          <input
+            type="password"
+            id="boohee-key-input"
+            placeholder="用于 /v1/food/detail"
+            autocomplete="off"
+          />
+          <button type="button" class="btn-ghost key-toggle" data-target="boohee-key-input" title="显示/隐藏">👁</button>
+        </div>
         <div class="field-hint">
           按薄荷文档，食物详情接口使用 Header: X-Api-Key。AI 识别到薄荷 food code 时会用薄荷热量覆盖估算值。
         </div>
@@ -1064,8 +1210,10 @@
     <div id="toast-container"></div>
 
     <script src="./env-config.js"></script>
+    <script src="./boohee-foods.js"></script>
     <script>
       const STORAGE_KEY = "calorie_records";
+      const RECYCLE_KEY = "calorie_recycle";
       const QWEN_API_URL =
         "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
       const BOOHEE_API_BASE = "https://api.boohee.com";
@@ -1073,12 +1221,42 @@
       const DEFAULT_DAILY_GOAL = 2000;
       const DEFAULT_DAILY_LIMIT = 2300;
 
+      // 所有 fetch 调用统一使用 10 秒超时，避免网络挂死时无限等待。
+      const FETCH_TIMEOUT_MS = 10000;
+
       let foods = [];
       let weights = [];
       let aiWeights = [];
       let currentImageDataUrl = null;
+      let currentThumbnailUrl = null;
       let currentResultNote = "";
       let loadingTimer = null;
+      // 编辑模式：非空时表示正在编辑某条已有记录，保存时覆盖而非新增。
+      let editingRecordId = null;
+      // 撤销删除：被暂存到回收站的记录 + 5 秒计时器句柄。
+      let pendingDeletion = null;
+      let pendingDeletionTimer = null;
+
+      /**
+       * 带超时的 fetch 调用。
+       * @param {string} url
+       * @param {RequestInit} options
+       * @param {number} timeoutMs
+       */
+      async function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          return await fetch(url, { ...options, signal: controller.signal });
+        } catch (error) {
+          if (error.name === "AbortError") {
+            throw new Error(`请求超时（${Math.round(timeoutMs / 1000)}s），请检查网络`);
+          }
+          throw error;
+        } finally {
+          clearTimeout(timer);
+        }
+      }
 
       document.addEventListener("DOMContentLoaded", () => {
         seedInputsFromStorage();
@@ -1105,12 +1283,45 @@
       }
 
       function seedInputsFromStorage() {
-        document.getElementById("qwen-key-input").value =
-          getApiKey("qwen_api_key");
-        document.getElementById("boohee-key-input").value =
-          getApiKey("boohee_api_key");
+        // 安全：密码字段默认不回填（避免屏幕共享、录屏泄露 key）。
+        // 用户在弹窗里手动点"显示/隐藏"再回显，或直接重新输入。
+        const qwenStored = getApiKey("qwen_api_key");
+        const booheeStored = getApiKey("boohee_api_key");
+        const qwenInput = document.getElementById("qwen-key-input");
+        const booheeInput = document.getElementById("boohee-key-input");
+        if (qwenStored) {
+          qwenInput.value = "";
+          qwenInput.placeholder = "已保存（点击眼睛图标查看/修改）";
+        }
+        if (booheeStored) {
+          booheeInput.value = "";
+          booheeInput.placeholder = "已保存（点击眼睛图标查看/修改）";
+        }
         document.getElementById("daily-goal-input").value = getDailyGoal();
         document.getElementById("daily-limit-input").value = getDailyLimit();
+        bindKeyToggles();
+      }
+
+      function bindKeyToggles() {
+        document.querySelectorAll(".key-toggle").forEach((btn) => {
+          if (btn.dataset.bound) return;
+          btn.dataset.bound = "1";
+          btn.addEventListener("click", () => {
+            const target = document.getElementById(btn.dataset.target);
+            const showing = target.type === "text";
+            target.type = showing ? "password" : "text";
+            btn.textContent = showing ? "👁" : "🙈";
+            // 第一次点"显示"时回填已存的 key
+            if (!showing && !target.value) {
+              const stored = getApiKey(
+                btn.dataset.target === "qwen-key-input"
+                  ? "qwen_api_key"
+                  : "boohee_api_key",
+              );
+              if (stored) target.value = stored;
+            }
+          });
+        });
       }
 
       function openSetupModal(required) {
@@ -1202,7 +1413,13 @@
         if (!file) return;
         if (!file.type.startsWith("image/")) return showError("请选择图片文件");
         try {
-          currentImageDataUrl = await compressImage(file);
+          // 识别用原图（1024px 保证识别准确）；缩略图用 64px JPEG（极小，可放心存）。
+          const [recognizeImage, thumbnail] = await Promise.all([
+            compressImage(file, 1024, 0.85),
+            compressImage(file, 64, 0.7).catch(() => null),
+          ]);
+          currentImageDataUrl = recognizeImage;
+          currentThumbnailUrl = thumbnail;
           await handleRecognition(currentImageDataUrl);
         } catch (error) {
           showError(error.message || "图片处理失败，请重试");
@@ -1210,7 +1427,9 @@
       }
 
       // 上传前将图片压缩到宽度 1024px 以内，减少 API 请求体积。
-      async function compressImage(file, maxWidth = 1024) {
+      // 缩略图模式（maxWidth <= 64）输出 30~64px 的小图，仅用于记录列表展示，
+      // 避免 base64 大图把 localStorage 撑爆。
+      async function compressImage(file, maxWidth = 1024, quality = 0.85) {
         return new Promise((resolve, reject) => {
           const canvas = document.createElement("canvas");
           const img = new Image();
@@ -1230,7 +1449,7 @@
                 reader.readAsDataURL(blob);
               },
               "image/jpeg",
-              0.85,
+              quality,
             );
             URL.revokeObjectURL(img.src);
           };
@@ -1253,15 +1472,23 @@
           renderConfirmScreen(result);
         } catch (error) {
           hideLoading();
-          const message = error.message || "";
-          if (message.includes("401")) showError("API Key 无效，请检查配置");
+          const message = String(error?.message || "");
+          if (message.includes("超时")) showError(message);
+          else if (message.includes("401") || message.includes("403"))
+            showError("API Key 无效或无权限，请检查配置");
+          else if (message.includes("429"))
+            showError("请求过于频繁，请稍后再试");
           else if (message.includes("格式异常"))
             showError("AI 返回异常，请重试");
-          else showError("网络错误，请检查连接后重试");
+          else if (message.includes("Network") || message.includes("Failed"))
+            showError("网络错误，请检查连接后重试");
+          else showError(message || "识别失败，请重试");
         }
       }
 
-      async function recognizeFood(imageBase64) {
+async function recognizeFood(imageBase64) {
+        // AI prompt：明确要求返回中文标准名（与本地映射表对齐），
+        // 这样 enrichWithDatabase 阶段能命中本地表 → 查薄荷详情。
         const systemPrompt = `你是一个专业的营养分析助手，擅长从食物图片中准确识别食物种类并估算营养信息。
 
 当用户上传食物图片时，你需要：
@@ -1277,11 +1504,16 @@
 - 汤勺长 ≈ 5cm
 - 1元硬币直径 ≈ 2.5cm
 
+输出要求：
+- name 字段使用最常见的中文名称（不要带"一份""大概"等修饰词）
+  例如："白米饭" 而不是 "大概一碗米饭"
+- 常见食物尽量使用通用名称（米饭、面条、鸡蛋、苹果、白菜、牛奶、宫保鸡丁 等）
+
 必须以合法 JSON 格式输出，结构如下：
 {
   "foods": [
     {
-      "name": "食物名称（中文）",
+      "name": "食物名称（中文，使用常见标准名）",
       "weight_g": 估算克重（数字，单位克）,
       "calories_per_100g": 每100g热量（数字，单位kcal）,
       "total_calories": 该食物总热量（数字，单位kcal）,
@@ -1294,7 +1526,7 @@
 }
 不要在 JSON 外面输出任何解释文字。`;
 
-        const response = await fetch(getQwenApiUrl(), {
+        const response = await fetchWithTimeout(getQwenApiUrl(), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1319,7 +1551,14 @@
           }),
         });
 
-        if (!response.ok) throw new Error(String(response.status));
+        if (!response.ok) {
+          let detail = String(response.status);
+          try {
+            const errBody = await response.json();
+            if (errBody?.error?.message) detail += `: ${errBody.error.message}`;
+          } catch (_) {}
+          throw new Error(detail);
+        }
         const data = await response.json();
         const content = data.choices?.[0]?.message?.content;
         if (!content) throw new Error("AI 返回格式异常");
@@ -1432,13 +1671,17 @@
         if (!code || !apiKey) return null;
         const url = `${BOOHEE_API_BASE}/v1/food/detail?code=${encodeURIComponent(code)}&with_units=true&with_materials=true`;
         try {
-          const response = await fetch(url, { headers: getBooheeHeaders() });
+          const response = await fetchWithTimeout(url, {
+            headers: getBooheeHeaders(),
+          });
+          if (!response.ok) return null;
           const data = await response.json();
           if (data.code === 0 || data.data || data.food) {
             return parseBooheeNutrition(data, fallbackName);
           }
         } catch (error) {
-          // 薄荷详情是增强能力，失败时继续使用 AI 估算值。
+          // 薄荷详情是增强能力，失败时继续使用 AI 估算值（控制台记录便于排查）。
+          console.warn("[boohee] detail fetch failed:", error?.message);
         }
         return null;
       }
@@ -1453,12 +1696,21 @@
       async function enrichWithDatabase(aiResult) {
         const enriched = await Promise.all(
           aiResult.foods.map(async (food) => {
-            const dbData = await queryNutrition(food);
+            // 1) 先查本地映射表（覆盖常见 ~80 种食物）。命中率高、稳定、可离线。
+            const localHit = window.lookupBooheeCode?.(food.name);
+            let resolvedCode = localHit?.code || food.boohee_code || food.code;
+            let canonicalName = localHit?.canonicalName || food.name;
+
+            // 2) 有 code + 有薄荷 key → 查详情；命中则用薄荷数据覆盖。
+            const dbData = resolvedCode
+              ? await queryBooheeDetail(resolvedCode, canonicalName)
+              : null;
+
             if (dbData?.calories_per_100g) {
               return {
                 ...food,
-                name: dbData.name || food.name,
-                boohee_code: dbData.code || food.boohee_code,
+                name: dbData.name || canonicalName,
+                boohee_code: dbData.code || resolvedCode,
                 calories_per_100g: dbData.calories_per_100g,
                 total_calories: Math.round(
                   (dbData.calories_per_100g * food.weight_g) / 100,
@@ -1471,7 +1723,13 @@
                 cal_source: "boohee",
               };
             }
-            return { ...food, cal_source: "ai_estimate" };
+            // 未命中数据库：标注来源，便于用户在确认页看到哪些没命中。
+            return {
+              ...food,
+              name: canonicalName,
+              boohee_code: resolvedCode,
+              cal_source: localHit ? "local_lookup_miss" : "ai_estimate",
+            };
           }),
         );
         return {
@@ -1666,12 +1924,20 @@
 
       function saveCurrentRecord() {
         if (!foods.length) return showError("没有可保存的识别结果");
-        saveRecord(foods, currentImageDataUrl);
+        if (editingRecordId) {
+          updateExistingRecord(editingRecordId, foods);
+        } else {
+          saveRecord(foods, currentThumbnailUrl);
+        }
         foods = [];
         weights = [];
         aiWeights = [];
         currentImageDataUrl = null;
-        showToast("已保存到今日记录");
+        currentThumbnailUrl = null;
+        editingRecordId = null;
+        const saveBtn = document.getElementById("confirm-save-btn");
+        if (saveBtn) saveBtn.textContent = "保存记录";
+        showToast(editingRecordId ? "记录已更新" : "已保存到今日记录");
         showScreen("home");
       }
 
@@ -1684,7 +1950,7 @@
         }
       }
 
-      function saveRecord(foodList, imageDataUrl = null) {
+      function saveRecord(foodList, thumbnailUrl = null) {
         const records = loadRecords();
         const now = Date.now();
         const recordFoods = foodList.map((food, index) => ({
@@ -1703,19 +1969,143 @@
             (sum, food) => sum + food.total_calories,
             0,
           ),
-          imageDataUrl,
+          thumbnailUrl,
         };
         records.push(record);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        } catch (error) {
+          // localStorage 写满时（QuotaExceededError）兜底：清掉缩略图重试一次。
+          if (error?.name === "QuotaExceededError" || /quota/i.test(error?.message || "")) {
+            const stripped = records.map((r) => ({ ...r, thumbnailUrl: null }));
+            try {
+              localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
+              showToast("存储已满，已清空缩略图后保存。建议导出历史备份。");
+              return record;
+            } catch (_) {
+              showError("浏览器存储已满，无法保存记录。请先导出历史或删除旧记录。");
+              throw error;
+            }
+          }
+          throw error;
+        }
         return record;
       }
 
+      function updateExistingRecord(id, foodList) {
+        const records = loadRecords();
+        const index = records.findIndex((r) => r.id === id);
+        if (index < 0) return saveRecord(foodList, currentThumbnailUrl);
+        const existing = records[index];
+        const recordFoods = foodList.map((food, idx) => ({
+          ...food,
+          weight_g: weights[idx],
+          total_calories: Math.round(
+            (food.calories_per_100g * weights[idx]) / 100,
+          ),
+        }));
+        records[index] = {
+          ...existing,
+          foods: recordFoods,
+          totalCalories: recordFoods.reduce(
+            (sum, food) => sum + food.total_calories,
+            0,
+          ),
+        };
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        } catch (error) {
+          showError("存储已满，无法更新记录。");
+          throw error;
+        }
+        return records[index];
+      }
+
+      function editRecordById(id) {
+        const record = loadRecords().find((r) => r.id === id);
+        if (!record) return;
+        editingRecordId = id;
+        foods = record.foods.map((f) => ({ ...f }));
+        weights = foods.map((f) => f.weight_g);
+        aiWeights = [...weights];
+        currentImageDataUrl = null; // 编辑模式不展示原图
+        currentThumbnailUrl = record.thumbnailUrl || null;
+        const note = document.getElementById("recognition-note");
+        note.textContent = `正在编辑：${record.mealType} ${new Date(record.timestamp).toLocaleString("zh-CN")}`;
+        note.classList.remove("hidden");
+        const preview = document.getElementById("confirm-preview");
+        preview.classList.add("hidden");
+        const saveBtn = document.getElementById("confirm-save-btn");
+        if (saveBtn) saveBtn.textContent = "更新记录";
+        renderAllCards();
+        updateTotal();
+        showScreen("confirm");
+      }
+
       function deleteRecord(id) {
+        // 直接硬删除（保留兼容旧调用路径，新流程走 deleteRecordWithUndo）
         const records = loadRecords().filter((record) => record.id !== id);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
         refreshHomeScreen();
         refreshHistoryScreen();
-        showToast("记录已删除");
+      }
+
+      /**
+       * 软删除：把记录暂存到回收站，5 秒内可撤销；超时则真删。
+       * 同时支持撤销未触发的硬删除。
+       */
+      function deleteRecordWithUndo(id) {
+        const records = loadRecords();
+        const record = records.find((r) => r.id === id);
+        if (!record) return;
+
+        // 如果上一条还没撤销，先把它真删（避免堆积）
+        commitPendingDeletion();
+
+        pendingDeletion = record;
+        records.splice(records.indexOf(record), 1);
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+        } catch (_) {}
+        refreshHomeScreen();
+        refreshHistoryScreen();
+
+        const toast = document.createElement("div");
+        toast.className = "toast toast-undo";
+        toast.innerHTML = `<span>记录已删除</span><button type="button" class="toast-undo-btn">撤销</button>`;
+        document.getElementById("toast-container").appendChild(toast);
+
+        const cleanup = () => {
+          pendingDeletion = null;
+          pendingDeletionTimer = null;
+          toast.remove();
+        };
+        toast.querySelector(".toast-undo-btn").addEventListener("click", () => {
+          if (!pendingDeletion) return cleanup();
+          const all = loadRecords();
+          all.push(pendingDeletion);
+          all.sort((a, b) => b.timestamp - a.timestamp);
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+          pendingDeletion = null;
+          clearTimeout(pendingDeletionTimer);
+          cleanup();
+          refreshHomeScreen();
+          refreshHistoryScreen();
+          showToast("已恢复");
+        });
+
+        pendingDeletionTimer = setTimeout(() => {
+          pendingDeletion = null;
+          pendingDeletionTimer = null;
+          toast.remove();
+        }, 5000);
+      }
+
+      function commitPendingDeletion() {
+        if (!pendingDeletion) return;
+        if (pendingDeletionTimer) clearTimeout(pendingDeletionTimer);
+        pendingDeletion = null;
+        pendingDeletionTimer = null;
       }
 
       function getMealType(timestamp) {
@@ -1811,7 +2201,17 @@
 
       function renderRecords(container, records, todayOnly) {
         if (!records.length) {
-          container.innerHTML = `<div class="empty">${todayOnly ? "今天还没有记录，拍一餐试试" : "暂无历史记录"}</div>`;
+          if (todayOnly) {
+            container.innerHTML = `
+              <div class="empty empty-cta">
+                <div class="empty-emoji">🍱</div>
+                <div class="empty-title">今天还没有记录</div>
+                <div class="empty-hint">拍一餐或点演示按钮就能体验完整流程</div>
+                <button class="btn-solid" type="button" onclick="showScreen('camera')">+ 记录一餐</button>
+              </div>`;
+          } else {
+            container.innerHTML = `<div class="empty">暂无历史记录</div>`;
+          }
           return;
         }
         const sorted = records
@@ -1830,33 +2230,59 @@
             const foodsText = record.foods
               .map((food) => `${food.name} ${food.weight_g}g`)
               .join(" · ");
-            const thumbUrl =
-              record.imageDataUrl ||
-              record.foods.find((food) => food.food_image_url)?.food_image_url;
+            // 缩略图优先级：保存的 thumbnailUrl > 薄荷 food_image_url > 食物名首字头像
+            const booheeThumb = record.foods.find(
+              (food) => food.food_image_url,
+            )?.food_image_url;
+            const thumbUrl = record.thumbnailUrl || booheeThumb || "";
+            const firstChar = (record.foods[0]?.name || "饭").trim().charAt(0);
             const thumb = thumbUrl
-              ? `<img class="thumb" src="${thumbUrl}" alt="${escapeHtml(record.mealType)}缩略图">`
-              : `<div class="thumb">🍽</div>`;
+              ? `<img class="thumb thumb-fallback-letter" data-letter="${escapeHtml(firstChar)}" src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(record.mealType)}缩略图" loading="lazy">`
+              : `<div class="thumb thumb-letter">${escapeHtml(firstChar)}</div>`;
+            const demoBadge = record.isDemo
+              ? `<span class="demo-badge" title="演示数据">演示</span>`
+              : "";
             return `
-          <article class="card record-card" data-record-id="${record.id}" oncontextmenu="handleRecordContextMenu(event, '${record.id}')">
+          <article class="card record-card" data-record-id="${escapeHtml(record.id)}" oncontextmenu="handleRecordContextMenu(event, '${escapeHtml(record.id)}')">
             ${thumb}
-            <div>
-              <div class="record-title"><span>${time}</span><span>${escapeHtml(record.mealType)}</span></div>
+            <div class="record-main">
+              <div class="record-title"><span>${time}</span><span>${escapeHtml(record.mealType)}</span>${demoBadge}</div>
               <div class="record-foods">${escapeHtml(foodsText)}</div>
               ${todayOnly ? "" : `<div class="history-date">${date}</div>`}
             </div>
-            <div>
+            <div class="record-actions">
               <div class="record-cal">${record.totalCalories}</div>
-              <button class="btn-ghost" type="button" onclick="deleteRecord('${record.id}')">删除</button>
+              <div class="record-btns">
+                <button class="btn-ghost btn-sm" type="button" onclick="editRecordById('${escapeHtml(record.id)}')" aria-label="编辑">编辑</button>
+                <button class="btn-ghost btn-sm" type="button" onclick="deleteRecordWithUndo('${escapeHtml(record.id)}')" aria-label="删除">删除</button>
+              </div>
             </div>
           </article>`;
           })
           .join("");
         installSwipeDelete(container);
+        installThumbFallback(container);
+      }
+
+      /**
+       * 给记录卡片里的缩略图 img 绑定 onerror：加载失败时降级为首字头像 div。
+       * 用 dataset 携带降级字符，避免内联 onerror 在 HTML 解析时被双引号截断。
+       */
+      function installThumbFallback(container) {
+        container.querySelectorAll("img.thumb-fallback-letter").forEach((img) => {
+          img.addEventListener("error", () => {
+            const letter = img.dataset.letter || "饭";
+            const div = document.createElement("div");
+            div.className = "thumb thumb-letter";
+            div.textContent = letter;
+            img.replaceWith(div);
+          }, { once: true });
+        });
       }
 
       function handleRecordContextMenu(event, id) {
         event.preventDefault();
-        if (confirm("删除这条记录？")) deleteRecord(id);
+        if (confirm("删除这条记录？")) deleteRecordWithUndo(id);
       }
 
       function installSwipeDelete(container) {
@@ -1883,8 +2309,7 @@
           card.addEventListener("touchend", () => {
             const diff = currentX - startX;
             card.style.transform = "";
-            if (diff < -72 && confirm("删除这条记录？"))
-              deleteRecord(card.dataset.recordId);
+            if (diff < -72) deleteRecordWithUndo(card.dataset.recordId);
           });
         });
       }
@@ -1903,8 +2328,10 @@
         const dailyLimit = getDailyLimit();
         const weekData = getLast7Days().map((date) => ({
           label: `${date.getMonth() + 1}/${date.getDate()}`,
+          date,
           calories: getDayTotal(date),
           isToday: isToday(date),
+          isoDate: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
         }));
         const maxValue = Math.max(
           dailyLimit,
@@ -1934,22 +2361,76 @@
               item.calories > dailyLimit
                 ? `<circle cx="${x + barWidth / 2}" cy="${y - 5}" r="3" fill="var(--c-red)" />`
                 : "";
+            // 整柱（rect + 标签）放进可点击 group，hover 时高亮 + 显示当日总量
             return `
-          <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="5" fill="${color}" opacity="${item.isToday ? 1 : 0.45}"></rect>
-          ${cap}
-          <text x="${x + barWidth / 2}" y="112" text-anchor="middle" font-size="10" fill="var(--c-muted)">${item.label}</text>`;
+          <g class="trend-bar" data-date="${item.isoDate}" data-calories="${item.calories}" tabindex="0" role="button" aria-label="${item.label} ${item.calories} 千卡，点击查看当日记录">
+            <rect x="${x}" y="${padding}" width="${barWidth}" height="${chartHeight}" fill="transparent"></rect>
+            <rect x="${x}" y="${y}" width="${barWidth}" height="${barHeight}" rx="5" fill="${color}" opacity="${item.isToday ? 1 : 0.45}"></rect>
+            ${cap}
+            <text x="${x + barWidth / 2}" y="112" text-anchor="middle" font-size="10" fill="var(--c-muted)">${item.label}</text>
+          </g>`;
           })
           .join("");
         document.getElementById("trend-max-label").textContent =
           `最高刻度 ${Math.round(maxValue)} kcal`;
-        document.getElementById("trend-chart").innerHTML = `
-        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近 7 日热量趋势图">
+        const chartContainer = document.getElementById("trend-chart");
+        chartContainer.innerHTML = `
+        <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="近 7 日热量趋势图，点击柱状图可查看当日记录">
           <line x1="${padding}" x2="${width - padding}" y1="${goalY}" y2="${goalY}" stroke="var(--c-amber)" stroke-dasharray="4 4" opacity=".7"></line>
           <text x="${width - padding}" y="${Math.max(10, goalY - 5)}" text-anchor="end" font-size="10" fill="var(--c-amber)">目标</text>
           <line x1="${padding}" x2="${width - padding}" y1="${limitY}" y2="${limitY}" stroke="var(--c-red)" stroke-dasharray="2 5" opacity=".72"></line>
           <text x="${padding}" y="${Math.max(10, limitY - 5)}" text-anchor="start" font-size="10" fill="var(--c-red)">上限</text>
           ${bars}
         </svg>`;
+
+        // 点击钻取：当日记录筛选展示
+        chartContainer.querySelectorAll(".trend-bar").forEach((bar) => {
+          const handler = () => {
+            const iso = bar.dataset.date;
+            const cals = Number(bar.dataset.calories || 0);
+            const [y, m, d] = iso.split("-").map(Number);
+            const start = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+            const end = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+            const dayRecords = loadRecords().filter(
+              (r) => r.timestamp >= start && r.timestamp <= end,
+            );
+            if (!dayRecords.length) {
+              showToast(`${m}/${d} 没有记录（${cals} kcal）`);
+              return;
+            }
+            showTrendDayModal(`${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`, dayRecords);
+          };
+          bar.addEventListener("click", handler);
+          bar.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              handler();
+            }
+          });
+        });
+      }
+
+      function showTrendDayModal(dateLabel, records) {
+        // 复用 #today-records 的渲染方式，但内容是指定日期
+        const total = records.reduce((s, r) => s + r.totalCalories, 0);
+        const wrap = document.createElement("div");
+        wrap.className = "modal show";
+        wrap.innerHTML = `
+          <div class="modal-card">
+            <h2>${dateLabel} · ${total} kcal</h2>
+            <div class="day-records-list"></div>
+            <div class="row" style="margin-top:14px;justify-content:flex-end">
+              <button class="btn-ghost" type="button" data-close>关闭</button>
+            </div>
+          </div>`;
+        document.body.appendChild(wrap);
+        const list = wrap.querySelector(".day-records-list");
+        renderRecords(list, records, false);
+        wrap.addEventListener("click", (e) => {
+          if (e.target === wrap || e.target.dataset.close !== undefined) {
+            wrap.remove();
+          }
+        });
       }
 
       function showLoading() {
@@ -1985,6 +2466,8 @@
 
       function runDemoRecognition() {
         currentImageDataUrl = null;
+        // 首次演示且无真实数据时，灌 7 天 demo 数据让趋势图有内容
+        seedDemoWeek();
         const demo = {
           foods: [
             {
@@ -1993,6 +2476,13 @@
               calories_per_100g: 116,
               total_calories: 174,
               confidence: "high",
+              cal_source: "boohee",
+              health_light: 1,
+              protein_per_100g: 2.6,
+              fat_per_100g: 0.3,
+              carbohydrate_per_100g: 25.6,
+              food_image_url:
+                "https://static.boohee.cn/image/food/small/food_1001001.jpg",
             },
             {
               name: "红烧肉",
@@ -2000,6 +2490,13 @@
               calories_per_100g: 478,
               total_calories: 574,
               confidence: "med",
+              cal_source: "boohee",
+              health_light: 3,
+              protein_per_100g: 18.5,
+              fat_per_100g: 45,
+              carbohydrate_per_100g: 4.8,
+              food_image_url:
+                "https://static.boohee.cn/image/food/small/food_1007014.jpg",
             },
             {
               name: "清炒青菜",
@@ -2007,12 +2504,133 @@
               calories_per_100g: 45,
               total_calories: 41,
               confidence: "high",
+              cal_source: "boohee",
+              health_light: 1,
+              protein_per_100g: 1.8,
+              fat_per_100g: 0.2,
+              carbohydrate_per_100g: 8.1,
+              food_image_url:
+                "https://static.boohee.cn/image/food/small/food_1004002.jpg",
             },
           ],
           total_calories: 789,
           note: "演示数据用于体验克重调整和保存流程，未调用真实 API。",
         };
         renderConfirmScreen(normalizeAiResult(demo));
+      }
+
+      /**
+       * 把"演示"的 7 天历史数据灌进 localStorage，让趋势图立刻有数据可看。
+       * 仅在用户首次点演示且 storage 里没有真实记录时调用，避免覆盖真数据。
+       */
+      function seedDemoWeek() {
+        const existing = loadRecords();
+        if (existing.some((r) => !r.isDemo)) return;
+        if (existing.some((r) => r.isDemo)) return; // 已灌过演示数据
+
+        const now = Date.now();
+        const dayMs = 86400000;
+        // 6 天前到 1 天前，每天 1~2 条；今天 0 条（保留空状态体验）
+        const template = [
+          { offset: 6, meals: [
+            { hour: 8, foods: [
+              { name: "包子", weight_g: 100, cal: 227 },
+              { name: "豆浆", weight_g: 250, cal: 65 },
+            ]},
+            { hour: 19, foods: [
+              { name: "米饭", weight_g: 150, cal: 174 },
+              { name: "宫保鸡丁", weight_g: 150, cal: 270 },
+              { name: "炒青菜", weight_g: 120, cal: 54 },
+            ]},
+          ]},
+          { offset: 5, meals: [
+            { hour: 13, foods: [
+              { name: "牛肉面", weight_g: 400, cal: 540 },
+            ]},
+            { hour: 20, foods: [
+              { name: "米饭", weight_g: 120, cal: 139 },
+              { name: "红烧鱼", weight_g: 180, cal: 270 },
+            ]},
+          ]},
+          { offset: 4, meals: [
+            // 超上限日
+            { hour: 12, foods: [
+              { name: "麻辣烫", weight_g: 600, cal: 720 },
+              { name: "可乐", weight_g: 500, cal: 215 },
+            ]},
+            { hour: 15, foods: [
+              { name: "蛋糕", weight_g: 120, cal: 360 },
+            ]},
+            { hour: 19, foods: [
+              { name: "烧烤", weight_g: 300, cal: 720 },
+              { name: "啤酒", weight_g: 500, cal: 215 },
+            ]},
+          ]},
+          { offset: 3, meals: [
+            // 偏低日
+            { hour: 13, foods: [
+              { name: "沙拉", weight_g: 250, cal: 130 },
+              { name: "酸奶", weight_g: 150, cal: 90 },
+            ]},
+          ]},
+          { offset: 2, meals: [
+            { hour: 8, foods: [
+              { name: "燕麦片", weight_g: 50, cal: 180 },
+              { name: "牛奶", weight_g: 250, cal: 165 },
+              { name: "苹果", weight_g: 200, cal: 100 },
+            ]},
+            { hour: 19, foods: [
+              { name: "米饭", weight_g: 100, cal: 116 },
+              { name: "清蒸鱼", weight_g: 150, cal: 165 },
+              { name: "西兰花", weight_g: 150, cal: 51 },
+            ]},
+          ]},
+          { offset: 1, meals: [
+            { hour: 12, foods: [
+              { name: "饺子", weight_g: 300, cal: 660 },
+              { name: "紫菜蛋花汤", weight_g: 250, cal: 60 },
+            ]},
+            { hour: 19, foods: [
+              { name: "米饭", weight_g: 130, cal: 151 },
+              { name: "麻婆豆腐", weight_g: 180, cal: 252 },
+              { name: "米饭", weight_g: 80, cal: 93 },
+            ]},
+          ]},
+          // offset 0 = 今天，留空
+        ];
+
+        const records = [];
+        for (const day of template) {
+          for (const meal of day.meals) {
+            const ts = now - day.offset * dayMs;
+            const date = new Date(ts);
+            date.setHours(meal.hour, Math.floor(Math.random() * 50), 0, 0);
+            const ts2 = date.getTime();
+            const foodList = meal.foods.map((f) => ({
+              name: f.name,
+              weight_g: f.weight,
+              calories_per_100g: Math.round((f.cal / f.weight) * 100),
+              total_calories: f.cal,
+              confidence: "med",
+              cal_source: "ai_estimate",
+            }));
+            records.push({
+              id: `demo-${day.offset}-${meal.hour}-${Math.random().toString(36).slice(2, 7)}`,
+              timestamp: ts2,
+              mealType: getMealType(ts2),
+              foods: foodList,
+              totalCalories: foodList.reduce((s, f) => s + f.total_calories, 0),
+              isDemo: true,
+            });
+          }
+        }
+
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+          refreshHomeScreen();
+          refreshHistoryScreen();
+          showToast("已为你生成 7 天演示数据，方便看趋势图");
+        } catch (_) {}
       }
 
       function clamp(value, min, max) {
@@ -2026,6 +2644,78 @@
           .replace(/>/g, "&gt;")
           .replace(/"/g, "&quot;")
           .replace(/'/g, "&#039;");
+      }
+
+      /**
+       * 导出全部记录为 CSV 文件下载。一条食物一行，便于在 Excel/Sheets 做营养分析。
+       * 包含 BOM 头以保证 Excel 正确识别 UTF-8 中文。
+       */
+      function exportCSV() {
+        const records = loadRecords();
+        if (!records.length) {
+          showToast("暂无记录可导出");
+          return;
+        }
+        const header = [
+          "日期",
+          "时间",
+          "餐次",
+          "食物",
+          "克重(g)",
+          "热量(kcal)",
+          "来源",
+          "演示数据",
+        ];
+        const rows = [header];
+        for (const r of records) {
+          const d = new Date(r.timestamp);
+          const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          const timeStr = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+          for (const f of r.foods) {
+            rows.push([
+              dateStr,
+              timeStr,
+              r.mealType || "",
+              f.name,
+              f.weight_g,
+              f.total_calories,
+              f.cal_source || "ai_estimate",
+              r.isDemo ? "是" : "否",
+            ]);
+          }
+        }
+        const csv = rows
+          .map((row) =>
+            row
+              .map((cell) => {
+                const s = String(cell ?? "");
+                return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+              })
+              .join(","),
+          )
+          .join("\n");
+        // BOM 让 Excel 直接识别 UTF-8
+        const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const filename = `caloriemaster_${new Date().toISOString().slice(0, 10)}.csv`;
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast(`已导出 ${records.length} 条记录`);
+      }
+
+      /**
+       * 注册 Service Worker（仅在 https/localhost 下生效）。
+       * 注册失败静默——PWA 是体验增强，不影响核心功能。
+       */
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("./sw.js").catch(() => {});
+        });
       }
     </script>
   </body>
