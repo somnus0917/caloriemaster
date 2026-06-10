@@ -26,6 +26,9 @@ export interface RecordDTO {
   mealType: string;
   totalCalories: number;
   thumbnailUrl: string | null;
+  hasImage: boolean;
+  imageMimeType: string | null;
+  imageSize: number | null;
   isDemo: boolean;
   createdAt: string;
   updatedAt: string;
@@ -36,6 +39,7 @@ export interface RecordInput {
   timestamp: number;
   mealType: string;
   thumbnailUrl?: string | null;
+  thumbnailDataUrl?: string;
   sourceId?: string;
   isDemo?: boolean;
   items: Array<{
@@ -51,6 +55,11 @@ export interface RecordInput {
     healthLight?: 0 | 1 | 2 | 3;
   }>;
 }
+
+export type ThumbnailAction =
+  | { type: "keep" }
+  | { type: "remove" }
+  | { type: "replace"; dataUrl: string };
 
 export async function listRecords(options: { from?: number; to?: number; limit?: number } = {}): Promise<RecordDTO[]> {
   const params = new URLSearchParams();
@@ -71,10 +80,16 @@ export async function createRecord(input: RecordInput): Promise<RecordDTO> {
   return record;
 }
 
-export async function updateRecord(id: string, input: RecordInput): Promise<RecordDTO> {
+export async function updateRecord(
+  id: string,
+  input: RecordInput,
+  thumbnailAction?: ThumbnailAction,
+): Promise<RecordDTO> {
+  const body: RecordInput & { thumbnailAction?: ThumbnailAction } = { ...input };
+  if (thumbnailAction) body.thumbnailAction = thumbnailAction;
   const { record } = await apiRequest<{ record: RecordDTO }>(`/api/records/${encodeURIComponent(id)}`, {
     method: "PUT",
-    body: input,
+    body,
   });
   return record;
 }
@@ -91,4 +106,13 @@ export async function importRecords(records: RecordInput[]): Promise<{ imported:
     method: "POST",
     body: { records },
   });
+}
+
+export interface SignedImageUrl {
+  url: string;
+  expiresIn: number;
+}
+
+export async function fetchSignedImageUrl(recordId: string): Promise<SignedImageUrl> {
+  return apiRequest<SignedImageUrl>(`/api/records/${encodeURIComponent(recordId)}/image-url`);
 }

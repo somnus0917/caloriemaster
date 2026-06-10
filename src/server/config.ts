@@ -43,6 +43,21 @@ const ConfigSchema = z
     BOOHEE_API_KEY: z.string().default(""),
     BOOHEE_API_URL: z.string().url().default("https://api.boohee.com"),
 
+    /**
+     * Aliyun OSS. All values live only on the server. The keys MUST
+     * never be exposed via `VITE_` or any other prefix that the
+     * Vite bundler would inline into the client.
+     */
+    OSS_REGION: z.string().default(""),
+    OSS_BUCKET: z.string().default(""),
+    /** Public endpoint used for signed GET URLs the browser loads from. */
+    OSS_PUBLIC_ENDPOINT: z.string().url().optional(),
+    /** Optional internal endpoint (same-region ECS) used for upload/delete. */
+    OSS_INTERNAL_ENDPOINT: z.string().url().optional(),
+    OSS_ACCESS_KEY_ID: z.string().default(""),
+    OSS_ACCESS_KEY_SECRET: z.string().default(""),
+    OSS_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
+
     AI_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(5),
     AI_DAILY_QUOTA: z.coerce.number().int().min(1).default(100),
     AUTH_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(10),
@@ -65,6 +80,23 @@ const ConfigSchema = z
       // must have it configured.
       path: ["QWEN_API_KEY"],
       message: "QWEN_API_KEY is required in production",
+    },
+  )
+  .refine(
+    (c) => {
+      // If the user wants image storage, they must configure OSS.
+      // We only treat OSS as "required" when at least one variable
+      // is set — if no OSS vars are provided we still let the app
+      // boot (image features degrade to "no image" only).
+      const anyOssVar = c.OSS_REGION || c.OSS_BUCKET || c.OSS_ACCESS_KEY_ID;
+      if (!anyOssVar) return true;
+      if (c.NODE_ENV === "test") return true;
+      return Boolean(c.OSS_REGION && c.OSS_BUCKET && c.OSS_ACCESS_KEY_ID && c.OSS_ACCESS_KEY_SECRET);
+    },
+    {
+      path: ["OSS_ACCESS_KEY_SECRET"],
+      message:
+        "OSS_REGION, OSS_BUCKET, OSS_ACCESS_KEY_ID and OSS_ACCESS_KEY_SECRET must all be set together",
     },
   );
 

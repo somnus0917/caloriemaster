@@ -178,6 +178,7 @@ ai_usage (
 | `PUT`  | `/api/records/:id` | Cookie | 更新 |
 | `DELETE` | `/api/records/:id` | Cookie | 删除 |
 | `GET`  | `/api/records/:id` | Cookie | 单条 |
+| `GET`  | `/api/records/:id/image-url` | Cookie | 返回 `{ url, expiresIn }`；浏览器用此签名 URL 加载图片 |
 | `POST` | `/api/records/import` | Cookie | 一次性导入（迁移用） |
 | `GET`  | `/api/settings` | Cookie | 读取设置 |
 | `PUT`  | `/api/settings` | Cookie | 更新设置 |
@@ -231,6 +232,119 @@ location / {
 ```
 
 **Cloudflare**：`TRUST_PROXY=true` + `APP_ORIGIN` 必须设为最终的 https URL。
+
+## 阿里云 OSS 图片存储
+
+食物记录的缩略图保存在私有 OSS Bucket 中，**前端永远拿不到 AccessKey**。
+
+### 流程
+
+```
+浏览器 (data:image/...;base64,...)
+  ↓  POST /api/records  body.thumbnailDataUrl
+Fastify (认证用户)
+  ├── decodeDataUrlImage  (校验 data URL 格式)
+  ├── processImage / sharp (re-encode WebP, 去掉 EXIF, ≤256×256, ≤200 KB)
+  ├── storage.uploadRecordImage  → 阿里云 OSS 私有 Bucket
+  ├── INSERT food_records  (仅存 imageObjectKey)
+  └── 返回 { record }
+
+浏览器需要查看图片时:
+  GET /api/records/:id/image-url
+    ↓
+  Fastify 用 ObjectStorage.createSignedGetUrl 生成 10 分钟短期签名 URL
+    ↓
+  浏览器 <img src={signed_url}>
+```
+
+### Object Key 结构
+
+服务端生成，客户端无法干预：
+
+```
+users/{userId}/records/{recordId}/thumbnail-{6 字节随机 hex}.webp
+```
+
+### RAM 最小权限示例
+
+创建一个 RAM 用户或角色，仅授权：
+
+```json
+{
+  "Version": "1",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "oss:PutObject",
+        "oss:GetObject",
+        "oss:DeleteObject"
+      ],
+      "Resource": "acs:oss:*:*:your-private-bucket/users/*"
+    }
+  ]
+}
+```
+
+不要授予 `oss:*` 或 `Resource: "*"`。创建 Bucket 时关闭公共读 ACL：
+
+```bash
+# aliyun CLI: 创建时默认私有；修改 ACL（谨慎）
+aliyun oss bucket setacl oss://your-private-bucket private
+```
+
+### 同地域 ECS 内网 Endpoint
+
+如果应用部署在与 OSS Bucket 相同的地域（例如 `oss-cn-hangzhou`），可同时配置：
+
+```dotenv
+OSS_PUBLIC_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou.aliyuncs.com
+OSS_INTERNAL_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou-internal.aliyuncs.com
+```
+
+- `OSS_INTERNAL_ENDPOINT` 用于上传 / 删除，节省带宽。
+- 签名 URL 永远使用 `OSS_PUBLIC_ENDPOINT`，浏览器才能访问。
+
+如果只配置 `OSS_PUBLIC_ENDPOINT`，服务端所有 OSS 操作都走公网；这对小流量场景完全够用。
+
+### 失败补偿
+
+`food_records` 与 OSS 对象不在同一个事务里，因此我们用显式补偿：
+
+| 步骤 | 失败时 |
+|---|---|
+| 1. 校验 + sharp 处理 | 抛 `IMAGE_INVALID` / `IMAGE_TOO_LARGE` / `IMAGE_PROCESSING_FAILED` |
+| 2. 上传 OSS | DB 还没碰；抛 `IMAGE_UPLOAD_FAILED` |
+| 3. 写 food_records / food_items | 删掉刚上传的 OSS object（孤儿），抛 `DATABASE_ERROR` |
+| 4. 删除记录（DELETE） | DB 先删，OSS 删除失败仅记日志（不影响用户） |
+
+对象 Key 由 `users/{userId}/records/...` 前缀兜底，因此即使补偿失败留下极少量孤儿，也可以靠 RAM Policy 限定前缀减小风险面，并配合 OSS 生命周期规则定期清理 `users/*/records/*/thumbnail-*.webp`。
+
+### CORS
+
+本轮采用"浏览器 → Fastify → OSS"，浏览器不直接跨域上传 OSS，因此 Bucket **不需要** CORS 规则让 PUT 通过。
+
+将来若引入"浏览器直传 OSS"等场景，再为 Bucket 配置精确 CORS（不要 `*`）：
+
+```json
+[
+  {
+    "AllowedOrigin": ["https://calorie.example.com"],
+    "AllowedMethod": ["GET", "HEAD"],
+    "AllowedHeader": [],
+    "ExposeHeader": ["ETag"],
+    "MaxAgeSeconds": 600
+  }
+]
+```
+
+### 图片隐私
+
+- Bucket 私有，Object ACL 不设置为公共读。
+- 上传时设置 `Cache-Control: private, max-age=3600`，避免被 CDN 误缓存。
+- 不在 OSS Metadata 里写 email / username / 原始文件名 / Session ID。
+- 服务端日志**绝不**记录 Base64 / 签名 URL / Cookie Token / AccessKey。
+- sharp 重编码时去掉 EXIF（包括 GPS、设备信息）。
 
 ## 前端变化
 

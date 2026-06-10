@@ -134,6 +134,7 @@ describe("useRecords (API-backed)", () => {
       timestamp: 1700000002000,
       mealType: "午餐",
       totalCalories: 174,
+      hasImage: false,
       foods: [
         {
           name: "米饭",

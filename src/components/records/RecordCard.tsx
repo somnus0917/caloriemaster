@@ -1,6 +1,6 @@
-import { useState } from "react";
 import type { Record } from "../../types";
 import { formatRecordDate, formatRecordTime } from "../../utils/dates";
+import { RecordThumbnail } from "./RecordThumbnail";
 
 interface RecordCardProps {
   record: Record;
@@ -9,21 +9,7 @@ interface RecordCardProps {
   onDelete: (id: string) => void;
 }
 
-function getThumbLetter(record: Record): string {
-  const name = record.foods[0]?.name || "饭";
-  return name.trim().charAt(0) || "饭";
-}
-
-function getBooheeThumb(record: Record): string {
-  return record.foods.find((f) => f.food_image_url)?.food_image_url || "";
-}
-
 export function RecordCard({ record, today, onEdit, onDelete }: RecordCardProps) {
-  const [imgFailed, setImgFailed] = useState(false);
-  const booheeThumb = getBooheeThumb(record);
-  const useImage = record.thumbnailUrl || booheeThumb;
-  const showImage = useImage && !imgFailed;
-
   const foodsText = record.foods
     .map((f) => `${f.name} ${f.weight_g}g`)
     .join(" · ");
@@ -38,17 +24,16 @@ export function RecordCard({ record, today, onEdit, onDelete }: RecordCardProps)
         if (window.confirm("删除这条记录？")) onDelete(record.id);
       }}
     >
-      {showImage ? (
-        <img
-          className="thumb thumb-fallback-letter"
-          src={useImage}
-          alt={`${record.mealType}缩略图`}
-          loading="lazy"
-          onError={() => setImgFailed(true)}
-        />
-      ) : (
-        <div className="thumb thumb-letter">{getThumbLetter(record)}</div>
-      )}
+      <RecordThumbnail
+        record={{
+          id: record.id,
+          hasImage: record.hasImage,
+          imageMimeType: record.imageMimeType ?? null,
+          thumbnailUrl: record.thumbnailUrl,
+          foods: record.foods,
+        }}
+        alt={`${record.mealType}缩略图`}
+      />
       <div className="record-main">
         <div className="record-title">
           <span>{formatRecordTime(record.timestamp)}</span>

@@ -7,7 +7,9 @@ import {
   updateRecord as apiUpdate,
   type RecordDTO,
   type RecordInput,
+  type ThumbnailAction,
 } from "../services/records";
+import { signedUrlCache } from "../services/signedUrlCache";
 import { buildDemoWeek } from "../data/demoData";
 import { getMealType } from "../utils/dates";
 import { computeTotalCalories } from "../utils/validation";
@@ -41,15 +43,23 @@ function dtoToRecord(dto: RecordDTO): Record {
     })),
     totalCalories: dto.totalCalories,
     thumbnailUrl: dto.thumbnailUrl,
+    hasImage: dto.hasImage,
+    imageMimeType: dto.imageMimeType,
     isDemo: dto.isDemo,
   };
 }
 
-function buildInput(foods: Food[], weights: number[], thumbnailUrl: string | null, opts: { sourceId?: string; isDemo?: boolean } = {}): RecordInput {
+function buildInput(
+  foods: Food[],
+  weights: number[],
+  thumbnail: { dataUrl?: string; legacyInline?: string | null } | null,
+  opts: { sourceId?: string; isDemo?: boolean } = {},
+): RecordInput {
   return {
     timestamp: Date.now(),
     mealType: getMealType(Date.now()),
-    thumbnailUrl,
+    thumbnailDataUrl: thumbnail?.dataUrl,
+    thumbnailUrl: thumbnail?.legacyInline ?? null,
     sourceId: opts.sourceId,
     isDemo: opts.isDemo ?? false,
     items: foods.map((f, i) => ({
@@ -73,11 +83,20 @@ export interface UseRecordsReturn {
   loading: boolean;
   error: string | null;
   reload: () => Promise<void>;
-  addRecord: (foods: Food[], weights: number[], thumbnailUrl: string | null) => Promise<Record>;
-  updateRecord: (id: string, foods: Food[], weights: number[]) => Promise<Record | null>;
+  addRecord: (
+    foods: Food[],
+    weights: number[],
+    thumbnail: { dataUrl?: string; legacyInline?: string | null } | null,
+  ) => Promise<Record>;
+  updateRecord: (
+    id: string,
+    foods: Food[],
+    weights: number[],
+    thumbnail?: { action: ThumbnailAction } | null,
+  ) => Promise<Record | null>;
   removeRecord: (id: string) => Promise<Record | null>;
   /** Re-create a previously deleted record (used for undo). */
-  restoreRecord: (record: Record) => Promise<Record | null>;
+  restoreRecord: (record: Record, thumbnail?: { dataUrl?: string; legacyInline?: string | null } | null) => Promise<Record | null>;
   seedDemoIfEmpty: () => Promise<boolean>;
 }
 
@@ -111,8 +130,12 @@ export function useRecords(): UseRecordsReturn {
   }, [reload]);
 
   const addRecord = useCallback(
-    async (foods: Food[], weights: number[], thumbnailUrl: string | null): Promise<Record> => {
-      const input = buildInput(foods, weights, thumbnailUrl);
+    async (
+      foods: Food[],
+      weights: number[],
+      thumbnail: { dataUrl?: string; legacyInline?: string | null } | null,
+    ): Promise<Record> => {
+      const input = buildInput(foods, weights, thumbnail);
       const dto = await apiCreate(input);
       const rec = dtoToRecord(dto);
       const next = [rec, ...recordsRef.current.filter((r) => r.id !== rec.id)]
@@ -125,12 +148,18 @@ export function useRecords(): UseRecordsReturn {
   );
 
   const updateRecord = useCallback(
-    async (id: string, foods: Food[], weights: number[]): Promise<Record | null> => {
+    async (
+      id: string,
+      foods: Food[],
+      weights: number[],
+      thumbnail: { action: ThumbnailAction } | null = null,
+    ): Promise<Record | null> => {
       const existing = recordsRef.current.find((r) => r.id === id);
       if (!existing) return null;
-      const input = buildInput(foods, weights, existing.thumbnailUrl);
-      const dto = await apiUpdate(id, input);
+      const input = buildInput(foods, weights, null);
+      const dto = await apiUpdate(id, input, thumbnail?.action);
       const rec = dtoToRecord(dto);
+      signedUrlCache.invalidate(id);
       const next = recordsRef.current
         .map((r) => (r.id === rec.id ? rec : r))
         .sort((a, b) => b.timestamp - a.timestamp);
@@ -146,6 +175,7 @@ export function useRecords(): UseRecordsReturn {
     if (!existing) return null;
     const dto = await apiDelete(id);
     const rec = dtoToRecord(dto);
+    signedUrlCache.invalidate(id);
     const next = recordsRef.current.filter((r) => r.id !== id);
     recordsRef.current = next;
     setRecords(next);
@@ -153,15 +183,23 @@ export function useRecords(): UseRecordsReturn {
   }, []);
 
   const restoreRecord = useCallback(
-    async (record: Record): Promise<Record | null> => {
+    async (
+      record: Record,
+      thumbnail: { dataUrl?: string; legacyInline?: string | null } | null = null,
+    ): Promise<Record | null> => {
       if (recordsRef.current.some((r) => r.id === record.id)) {
         // Already there — e.g. user tapped undo twice.
         return recordsRef.current.find((r) => r.id === record.id) ?? null;
       }
-      const input = buildInput(record.foods, record.foods.map((f) => f.weight_g), record.thumbnailUrl, {
-        sourceId: `undo-${record.id}-${Date.now()}`,
-        isDemo: record.isDemo,
-      });
+      const input = buildInput(
+        record.foods,
+        record.foods.map((f) => f.weight_g),
+        thumbnail,
+        {
+          sourceId: `undo-${record.id}-${Date.now()}`,
+          isDemo: record.isDemo,
+        },
+      );
       const dto = await apiCreate(input);
       const rec = dtoToRecord(dto);
       const next = [rec, ...recordsRef.current].sort((a, b) => b.timestamp - a.timestamp);

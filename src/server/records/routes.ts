@@ -7,6 +7,7 @@ import { handleApiError, sendError, ErrorCode } from "../errors.js";
 import { requireAuth, requireAuthedUser } from "../auth/middleware.js";
 import {
   createRecord,
+  createSignedImageUrl,
   deleteRecord,
   getRecord,
   importRecords,
@@ -86,5 +87,16 @@ export async function registerRecordRoutes(app: FastifyInstance): Promise<void> 
       return sendError(reply, 404, ErrorCode.RECORD_NOT_FOUND, "记录不存在");
     }
     return reply.send({ record });
+  });
+
+  app.get("/api/records/:id/image-url", { preHandler: requireAuth }, async (request, reply) => {
+    const user = requireAuthedUser(request);
+    const { id } = request.params as { id: string };
+    try {
+      const signed = await createSignedImageUrl(user.id, id);
+      return reply.send(signed);
+    } catch (err) {
+      return handleApiError(reply, err);
+    }
   });
 }

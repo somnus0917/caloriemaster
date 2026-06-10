@@ -22,6 +22,7 @@ import { registerRecordRoutes } from "./records/routes.js";
 import { registerSettingsRoutes } from "./settings/routes.js";
 import { createRateLimiters } from "./ai/rateLimit.js";
 import { getDb } from "./db/client.js";
+import { isStorageConfigured } from "./storage/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -112,8 +113,14 @@ export async function buildApp(): Promise<FastifyInstance> {
   // CSRF
   app.addHook("preHandler", csrfPreHandler);
 
-  // Liveness probe
-  app.get("/api/health", async () => ({ ok: true, ts: new Date().toISOString() }));
+  // Liveness probe. Reports whether OSS is configured but does NOT
+  // touch the OSS network — we don't want a health check to fail
+  // just because the bucket had a hiccup.
+  app.get("/api/health", async () => ({
+    ok: true,
+    ts: new Date().toISOString(),
+    storage: isStorageConfigured() ? "oss" : "none",
+  }));
 
   // Register routes
   await registerAuthRoutes(app);

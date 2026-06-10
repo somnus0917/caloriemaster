@@ -166,6 +166,7 @@ export function buildDemoWeek(now: number = Date.now()): Record[] {
         foods,
         totalCalories: foods.reduce((s, f) => s + f.total_calories, 0),
         thumbnailUrl: null,
+        hasImage: false,
         isDemo: true,
       });
     }

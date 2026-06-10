@@ -72,7 +72,20 @@ export const foodRecords = pgTable(
     timestamp: timestamp("timestamp", { withTimezone: false }).notNull(),
     mealType: varchar("meal_type", { length: 20 }).notNull(),
     totalCalories: real("total_calories").notNull(),
+    /**
+     * Legacy inline thumbnail (base64 data URL). New records store
+     * their image in OSS via `imageObjectKey` instead. We keep this
+     * column for the one-shot localStorage migration path.
+     */
     thumbnailUrl: text("thumbnail_url"),
+    /**
+     * OSS object key for the processed thumbnail. Only the key is
+     * stored — the public bucket URL is never persisted, and the
+     * browser fetches a short-lived signed URL on demand.
+     */
+    imageObjectKey: text("image_object_key"),
+    imageMimeType: varchar("image_mime_type", { length: 30 }),
+    imageSize: integer("image_size"),
     isDemo: boolean("is_demo").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: false }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: false }).defaultNow().notNull(),

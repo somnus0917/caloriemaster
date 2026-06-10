@@ -113,11 +113,13 @@ export function App() {
       void records.removeRecord(id).then((removed) => {
         if (!removed) return;
         showUndo("记录已删除", () => {
-          void records.restoreRecord(removed);
+          void records.restoreRecord(removed, {
+            dataUrl: recognition?.imageDataUrl ?? undefined,
+          });
         });
       });
     },
-    [records, showUndo],
+    [records, showUndo, recognition?.imageDataUrl],
   );
 
   const handleSave = useCallback(() => {
@@ -130,12 +132,11 @@ export function App() {
       return;
     }
     const wasEditing = editingId !== null;
-    const { result, weights, thumbnailUrl } = recognition;
+    const { result, weights, imageDataUrl } = recognition;
+    const thumbnail = imageDataUrl ? { dataUrl: imageDataUrl } : null;
     const promise = wasEditing && editingId
       ? records.updateRecord(editingId, result.foods as Food[], weights).then((r) => (r ? "updated" : null))
-      : records
-          .addRecord(result.foods as Food[], weights, thumbnailUrl)
-          .then(() => "created");
+      : records.addRecord(result.foods as Food[], weights, thumbnail).then(() => "created");
     promise
       .then((status) => {
         if (status === "updated") showToast("记录已更新");

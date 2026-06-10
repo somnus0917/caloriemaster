@@ -32,6 +32,9 @@ export interface Record {
   foods: Food[];
   totalCalories: number;
   thumbnailUrl: string | null;
+  /** True iff the server has an OSS image for this record. */
+  hasImage: boolean;
+  imageMimeType?: string | null;
   isDemo?: boolean;
 }
 

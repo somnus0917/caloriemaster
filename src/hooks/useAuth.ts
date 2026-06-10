@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { fetchMe, login as apiLogin, logout as apiLogout, register as apiRegister, type AuthUser } from "../services/auth.js";
+import { signedUrlCache } from "../services/signedUrlCache.js";
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
@@ -55,6 +56,9 @@ export function useAuth(): UseAuthReturn {
     } finally {
       setUser(null);
       setStatus("unauthenticated");
+      // Wipe any in-memory signed OSS URLs so a different user
+      // on the same browser can't reuse them.
+      signedUrlCache.clear();
     }
   }, []);
 

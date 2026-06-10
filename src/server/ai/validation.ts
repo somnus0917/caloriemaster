@@ -153,20 +153,31 @@ export const FoodItemInputSchema = z.object({
 export const RecordInputSchema = z.object({
   timestamp: z.number().int().positive(),
   mealType: z.string().min(1).max(20),
+  /** Legacy inline thumbnail — accepted during the one-shot localStorage migration. */
   thumbnailUrl: z
     .string()
     .max(THUMBNAIL_MAX)
     .nullable()
-    .optional()
-    .refine(
-      (v) => v == null || /^(data:image\/(jpeg|png|webp);base64,|[A-Za-z0-9+/=]{0,})$/.test(v),
-      { message: "thumbnailUrl 格式不合法" },
-    ),
+    .optional(),
+  /** New image field: a small Data URL the server uploads to OSS. */
+  thumbnailDataUrl: z
+    .string()
+    .max(THUMBNAIL_MAX)
+    .optional(),
   sourceId: z.string().max(100).optional(),
   isDemo: z.boolean().optional().default(false),
   items: z.array(FoodItemInputSchema).min(MIN_FOODS).max(MAX_FOODS),
   note: z.string().max(NOTE_MAX).optional(),
 });
+
+export const ThumbnailActionSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("keep") }),
+  z.object({ type: z.literal("remove") }),
+  z.object({
+    type: z.literal("replace"),
+    dataUrl: z.string().min(1).max(THUMBNAIL_MAX),
+  }),
+]);
 
 export type RecordInput = z.infer<typeof RecordInputSchema>;
 export type FoodItemInput = z.infer<typeof FoodItemInputSchema>;
