@@ -15,3 +15,7 @@ src/vite-env.d.ts.bak
 # Test artifacts
 coverage
 .vitest-cache
+
+# opencode (CLI tool) artifacts
+.codegraph/
+opencode.jsonc
