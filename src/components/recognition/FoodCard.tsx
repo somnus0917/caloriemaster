@@ -65,7 +65,6 @@ export function FoodCard({ food, weight, aiWeight, onWeightChange }: FoodCardPro
         {macros}
       </div>
       <WeightAdjuster
-        index={0}
         value={weight}
         aiValue={aiWeight}
         onChange={onWeightChange}
