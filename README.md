@@ -39,7 +39,7 @@
 - 每条记录都按 `userId` 隔离；不可能跨用户读/写/删。
 - 修改性请求（POST/PUT/DELETE）必须有 `Origin` 头，且与 `APP_ORIGIN` 一致，否则 403。
 - `/api/recognize-food` 仍然只在服务端构造 system prompt / 模型 / 温度。客户端只能提交 `imageBase64`。
-- 原始 1024px 识别图只在内存中保存，确认后立即释放；只有 64px 缩略图可能进入数据库（且仅在用户显式保存时）。
+- 原始 1024px 识别图只在内存中保存，确认后立即释放；只有处理后的缩略图（512px）和原图（2048px）可能进入数据库（且仅在用户显式保存时）。
 
 ## 快速开始
 
@@ -116,7 +116,13 @@ food_records (
   timestamp       timestamp NOT NULL,
   meal_type       varchar(20) NOT NULL,
   total_calories  real NOT NULL,           -- 服务端重算
-  thumbnail_url   text,                    -- 仅 64px
+  thumbnail_url   text,                    -- 旧字段，仅用于迁移
+  image_object_key text,                   -- OSS 缩略图对象键 (512px WebP)
+  image_mime_type  varchar(30),
+  image_size       integer,
+  original_image_object_key text,          -- OSS 原图对象键 (2048px WebP)
+  original_image_mime_type  varchar(30),
+  original_image_size       integer,
   is_demo         boolean NOT NULL DEFAULT false,
   created_at, updated_at,
   UNIQUE (user_id, source_id)              -- 用于去重
@@ -178,7 +184,7 @@ ai_usage (
 | `PUT`  | `/api/records/:id` | Cookie | 更新 |
 | `DELETE` | `/api/records/:id` | Cookie | 删除 |
 | `GET`  | `/api/records/:id` | Cookie | 单条 |
-| `GET`  | `/api/records/:id/image-url` | Cookie | 返回 `{ url, expiresIn }`；浏览器用此签名 URL 加载图片 |
+| `GET`  | `/api/records/:id/image-url` | Cookie | 返回 `{ url, expiresIn }`；浏览器用此签名 URL 加载图片。支持 `?type=original` 参数获取原图 URL |
 | `POST` | `/api/records/import` | Cookie | 一次性导入（迁移用） |
 | `GET`  | `/api/settings` | Cookie | 读取设置 |
 | `PUT`  | `/api/settings` | Cookie | 更新设置 |
@@ -244,13 +250,16 @@ location / {
   ↓  POST /api/records  body.thumbnailDataUrl
 Fastify (认证用户)
   ├── decodeDataUrlImage  (校验 data URL 格式)
-  ├── processImage / sharp (re-encode WebP, 去掉 EXIF, ≤256×256, ≤200 KB)
-  ├── storage.uploadRecordImage  → 阿里云 OSS 私有 Bucket
-  ├── INSERT food_records  (仅存 imageObjectKey)
+  ├── processImage / sharp (缩略图: 512px WebP, ≤500 KB)
+  ├── processOriginalImage / sharp (原图: 2048px WebP, ≤5 MB)
+  ├── storage.uploadRecordImage  → 阿里云 OSS 私有 Bucket (缩略图)
+  ├── storage.uploadOriginalImage  → 阿里云 OSS 私有 Bucket (原图)
+  ├── INSERT food_records  (仅存 imageObjectKey + originalImageObjectKey)
   └── 返回 { record }
 
 浏览器需要查看图片时:
-  GET /api/records/:id/image-url
+  GET /api/records/:id/image-url           # 缩略图 (默认)
+  GET /api/records/:id/image-url?type=original  # 原图
     ↓
   Fastify 用 ObjectStorage.createSignedGetUrl 生成 10 分钟短期签名 URL
     ↓
@@ -263,6 +272,7 @@ Fastify (认证用户)
 
 ```
 users/{userId}/records/{recordId}/thumbnail-{6 字节随机 hex}.webp
+users/{userId}/records/{recordId}/original-{6 字节随机 hex}.webp
 ```
 
 ### RAM 最小权限示例
@@ -313,12 +323,12 @@ OSS_INTERNAL_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou-internal.aliyu
 
 | 步骤 | 失败时 |
 |---|---|
-| 1. 校验 + sharp 处理 | 抛 `IMAGE_INVALID` / `IMAGE_TOO_LARGE` / `IMAGE_PROCESSING_FAILED` |
-| 2. 上传 OSS | DB 还没碰；抛 `IMAGE_UPLOAD_FAILED` |
-| 3. 写 food_records / food_items | 删掉刚上传的 OSS object（孤儿），抛 `DATABASE_ERROR` |
+| 1. 校验 + sharp 处理（缩略图 + 原图并行） | 抛 `IMAGE_INVALID` / `IMAGE_TOO_LARGE` / `IMAGE_PROCESSING_FAILED` |
+| 2. 上传 OSS（缩略图 + 原图并行） | DB 还没碰；抛 `IMAGE_UPLOAD_FAILED` |
+| 3. 写 food_records / food_items | 删掉刚上传的 OSS objects（孤儿），抛 `DATABASE_ERROR` |
 | 4. 删除记录（DELETE） | DB 先删，OSS 删除失败仅记日志（不影响用户） |
 
-对象 Key 由 `users/{userId}/records/...` 前缀兜底，因此即使补偿失败留下极少量孤儿，也可以靠 RAM Policy 限定前缀减小风险面，并配合 OSS 生命周期规则定期清理 `users/*/records/*/thumbnail-*.webp`。
+对象 Key 由 `users/{userId}/records/...` 前缀兜底，因此即使补偿失败留下极少量孤儿，也可以靠 RAM Policy 限定前缀减小风险面，并配合 OSS 生命周期规则定期清理 `users/*/records/*/thumbnail-*.webp` 和 `users/*/records/*/original-*.webp`。
 
 ### CORS
 
@@ -345,6 +355,7 @@ OSS_INTERNAL_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou-internal.aliyu
 - 不在 OSS Metadata 里写 email / username / 原始文件名 / Session ID。
 - 服务端日志**绝不**记录 Base64 / 签名 URL / Cookie Token / AccessKey。
 - sharp 重编码时去掉 EXIF（包括 GPS、设备信息）。
+- 缩略图和原图都经过 EXIF 剥离处理，保护用户隐私。
 
 ## 前端变化
 
@@ -354,6 +365,8 @@ OSS_INTERNAL_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou-internal.aliyu
 - 删除记录的撤销重新 `POST` 一条新记录（带 `sourceId: "undo-<oldId>"`），避免在数据库里"假装恢复"。
 - 旧 `localStorage` 里的 `calorie_records` 数据：登录后弹出"导入历史记录"提示。用户确认后批量 `POST /api/records/import`，完成后清除旧 key。
 - `useRecognitionFlow.startRecognition()` 返回 `boolean`：仅在成功时跳到确认页。`NO_FOOD_DETECTED` 时停留在拍照页。
+- 编辑记录使用独立的 `EditPage` 组件，不再复用确认页面。
+- 点击记录卡片的缩略图可打开 `ImageViewer` 组件查看大图（优先加载原图）。
 - `useSettings()`、`useRecords()` 全部 async，失败抛错，UI 转 toast。
 
 ## localStorage 迁移
@@ -418,7 +431,7 @@ DATABASE_URL=postgresql://cm:cm@localhost:5433/cm npm test
 1. **单实例限流**：`AI_RATE_LIMIT_PER_MINUTE` 等基于内存。多实例部署需要共享存储。
 2. **没有忘记密码 / 邮箱验证**：本期不做。可以后续在 `users` 加 `email_verified` 字段并补 `/api/auth/*` 端点。
 3. **没有第三方 OAuth**。
-4. **没有图片云存储**：本期纯文本 thumbnail（≤ 32KB）。如果要支持原图备份，需要接 S3。
+4. **图片存储在阿里云 OSS**：同时保存缩略图（512px）和原图（2048px），支持点击查看大图。
 5. **食物重量仍然只是视觉估算**。登录与加密不能让它变准。`/api/recognize-food` 的 prompt 已写明不确定性。
 6. **CSRF Origin 校验依赖 APP_ORIGIN**：必须正确配置。`http://` 和 `https://` 视为不同 origin。
 7. **没有管理后台**：Drizzle Studio 是当前唯一的运维 UI。
@@ -434,7 +447,7 @@ caloriemaster/
 │   │   ├── common/                # Modal / LoadingOverlay / SetupModal / Toast / MigrationPrompt
 │   │   ├── layout/                # TopNav / BottomNav
 │   │   ├── recognition/           # FoodCard / WeightAdjuster / ImagePicker
-│   │   └── records/               # RecordList / RecordCard / TrendChart
+│   │   └── records/               # RecordList / RecordCard / TrendChart / ImageViewer
 │   ├── data/                      # 静态数据 (booheeFoods, demoData)
 │   ├── hooks/
 │   │   ├── useAuth.ts             # NEW: 认证状态

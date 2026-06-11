@@ -11,6 +11,7 @@ const records: Record[] = [
     totalCalories: 500,
     thumbnailUrl: null,
     hasImage: false,
+    hasOriginalImage: false,
     foods: [
       {
         name: "米饭",
@@ -57,6 +58,7 @@ describe("CSV export", () => {
         totalCalories: 0,
         thumbnailUrl: null,
         hasImage: false,
+        hasOriginalImage: false,
         foods: [
           {
             name: 'food"with"quote, and comma',

@@ -35,6 +35,11 @@ export interface Record {
   /** True iff the server has an OSS image for this record. */
   hasImage: boolean;
   imageMimeType?: string | null;
+  imageSize?: number | null;
+  /** True iff the server has an OSS original image for this record. */
+  hasOriginalImage: boolean;
+  originalImageMimeType?: string | null;
+  originalImageSize?: number | null;
   isDemo?: boolean;
 }
 

@@ -61,7 +61,7 @@ export async function compressForRecognition(file: File): Promise<string> {
 
 export async function compressForThumbnail(file: File): Promise<string | null> {
   try {
-    return await compressImage(file, { maxWidth: 64, quality: 0.7 });
+    return await compressImage(file, { maxWidth: 512, quality: 0.85 });
   } catch {
     return null;
   }

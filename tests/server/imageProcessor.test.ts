@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 import sharp from "sharp";
-import { processImage, MAX_OUTPUT_BYTES, OUTPUT_MIME } from "../../src/server/storage/imageProcessor";
+import { processImage, MAX_THUMBNAIL_BYTES, OUTPUT_MIME } from "../../src/server/storage/imageProcessor";
 
 async function makeJpeg(size = 100): Promise<Buffer> {
   return sharp({
@@ -36,7 +36,7 @@ describe("processImage", () => {
     const input = await makeJpeg(120);
     const out = await processImage(input);
     expect(out.mimeType).toBe(OUTPUT_MIME);
-    expect(out.size).toBeLessThanOrEqual(MAX_OUTPUT_BYTES);
+    expect(out.size).toBeLessThanOrEqual(MAX_THUMBNAIL_BYTES);
     expect(out.size).toBeGreaterThan(0);
   });
 
@@ -52,15 +52,15 @@ describe("processImage", () => {
   });
 
   it("scales down images that exceed the max dimension", async () => {
-    // 1000x1000 should be resized to 256x256 (max dimension).
+    // 1000x1000 should be resized to 512x512 (max dimension).
     const input = await makeJpeg(1000);
     const out = await processImage(input);
     const meta = await sharp(out.data).metadata();
-    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(256);
+    expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBeLessThanOrEqual(512);
   });
 
   it("refuses oversized raw input", async () => {
-    const huge = Buffer.alloc(5 * 1024 * 1024, 1);
+    const huge = Buffer.alloc(11 * 1024 * 1024, 1);
     await expect(processImage(huge)).rejects.toMatchObject({ code: "IMAGE_TOO_LARGE" });
   });
 

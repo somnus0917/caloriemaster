@@ -55,6 +55,24 @@ export class FakeStorage implements ObjectStorage {
     return { objectKey, size: input.data.length, mimeType: input.mimeType };
   }
 
+  async uploadOriginalImage(input: UploadImageInput): Promise<UploadedImage> {
+    if (this.opts.failUploads) {
+      throw new Error("fake storage: upload failure");
+    }
+    const suffix = Math.random().toString(36).slice(2, 14);
+    const ext = input.mimeType === "image/jpeg" ? "jpg" : input.mimeType === "image/png" ? "png" : "webp";
+    const objectKey =
+      this.opts.forceObjectKey ?? `users/${input.userId}/records/${input.recordId}/original-${suffix}.${ext}`;
+    this.uploads.push({
+      userId: input.userId,
+      recordId: input.recordId,
+      mimeType: input.mimeType,
+      size: input.data.length,
+    });
+    this.objects.set(objectKey, input.data);
+    return { objectKey, size: input.data.length, mimeType: input.mimeType };
+  }
+
   async deleteObject(objectKey: string): Promise<void> {
     if (this.opts.failDeletes) {
       throw new Error("fake storage: delete failure");

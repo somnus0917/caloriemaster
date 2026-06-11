@@ -46,6 +46,10 @@ function dtoToRecord(dto: RecordDTO): Record {
     thumbnailUrl: dto.thumbnailUrl,
     hasImage: dto.hasImage,
     imageMimeType: dto.imageMimeType,
+    imageSize: dto.imageSize,
+    hasOriginalImage: dto.hasOriginalImage,
+    originalImageMimeType: dto.originalImageMimeType,
+    originalImageSize: dto.originalImageSize,
     isDemo: dto.isDemo,
   };
 }

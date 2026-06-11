@@ -27,7 +27,7 @@ import { ApiError, ErrorCode } from "../errors.js";
 import { computeItemTotal, RecordInputSchema, type RecordInput } from "../ai/validation.js";
 import { getMealType } from "../../utils/dates.js";
 import { decodeDataUrlImage } from "../storage/dataUrl.js";
-import { ImageProcessingError, processImage } from "../storage/imageProcessor.js";
+import { ImageProcessingError, processImage, processOriginalImage } from "../storage/imageProcessor.js";
 import { getObjectStorage, isStorageConfigured } from "../storage/index.js";
 import type { ObjectStorage, SupportedImageMime, UploadedImage } from "../storage/storage.js";
 
@@ -43,6 +43,10 @@ export interface RecordWithItems {
   hasImage: boolean;
   imageMimeType: string | null;
   imageSize: number | null;
+  /** True iff the server has an OSS object for this record's original image. */
+  hasOriginalImage: boolean;
+  originalImageMimeType: string | null;
+  originalImageSize: number | null;
   isDemo: boolean;
   createdAt: string;
   updatedAt: string;
@@ -93,6 +97,9 @@ function toRecordView(rec: FoodRecord, items: FoodItem[]): RecordWithItems {
     hasImage: Boolean(rec.imageObjectKey),
     imageMimeType: rec.imageMimeType,
     imageSize: rec.imageSize,
+    hasOriginalImage: Boolean(rec.originalImageObjectKey),
+    originalImageMimeType: rec.originalImageMimeType,
+    originalImageSize: rec.originalImageSize,
     isDemo: rec.isDemo,
     createdAt: rec.createdAt.toISOString(),
     updatedAt: rec.updatedAt.toISOString(),
@@ -190,17 +197,23 @@ interface PreparedImage {
   size: number;
 }
 
+interface PreparedImages {
+  thumbnail: PreparedImage;
+  original: PreparedImage;
+}
+
 /**
  * Decode the data URL, run it through the server-side image
- * processor, and upload to OSS. The caller passes the record id
- * (or `null` for the import path which generates its own).
+ * processor, and upload both thumbnail and original to OSS.
+ * The caller passes the record id (or `null` for the import path
+ * which generates its own).
  */
 async function processAndUpload(
   userId: string,
   recordId: string,
   dataUrl: string,
   storage: ObjectStorage,
-): Promise<PreparedImage> {
+): Promise<PreparedImages> {
   const decoded = decodeDataUrlImage(dataUrl);
   if (!decoded.ok) {
     throw new ApiError(
@@ -209,9 +222,15 @@ async function processAndUpload(
       decoded.message,
     );
   }
-  let processed: { data: Buffer; mimeType: SupportedImageMime; size: number };
+
+  // Process both thumbnail and original in parallel
+  let thumbnailProcessed: { data: Buffer; mimeType: SupportedImageMime; size: number };
+  let originalProcessed: { data: Buffer; mimeType: SupportedImageMime; size: number };
   try {
-    processed = await processImage(decoded.data);
+    [thumbnailProcessed, originalProcessed] = await Promise.all([
+      processImage(decoded.data),
+      processOriginalImage(decoded.data),
+    ]);
   } catch (err) {
     if (err instanceof ImageProcessingError) {
       const status = err.code === "IMAGE_TOO_LARGE" ? 413 : 400;
@@ -219,14 +238,25 @@ async function processAndUpload(
     }
     throw err;
   }
-  let uploaded: UploadedImage;
+
+  // Upload both images in parallel
+  let thumbnailUploaded: UploadedImage;
+  let originalUploaded: UploadedImage;
   try {
-    uploaded = await storage.uploadRecordImage({
-      userId,
-      recordId,
-      data: processed.data,
-      mimeType: processed.mimeType,
-    });
+    [thumbnailUploaded, originalUploaded] = await Promise.all([
+      storage.uploadRecordImage({
+        userId,
+        recordId,
+        data: thumbnailProcessed.data,
+        mimeType: thumbnailProcessed.mimeType,
+      }),
+      storage.uploadOriginalImage({
+        userId,
+        recordId,
+        data: originalProcessed.data,
+        mimeType: originalProcessed.mimeType,
+      }),
+    ]);
   } catch (err) {
     console.error("[records] OSS upload failed", {
       userId,
@@ -236,10 +266,18 @@ async function processAndUpload(
     });
     throw new ApiError(502, ErrorCode.IMAGE_UPLOAD_FAILED, "图片保存失败，请稍后重试");
   }
+
   return {
-    objectKey: uploaded.objectKey,
-    mimeType: uploaded.mimeType,
-    size: uploaded.size,
+    thumbnail: {
+      objectKey: thumbnailUploaded.objectKey,
+      mimeType: thumbnailUploaded.mimeType,
+      size: thumbnailUploaded.size,
+    },
+    original: {
+      objectKey: originalUploaded.objectKey,
+      mimeType: originalUploaded.mimeType,
+      size: originalUploaded.size,
+    },
   };
 }
 
@@ -275,7 +313,7 @@ export async function createRecord(
   //    Instead, we generate the id in JS (still a v4 UUID) and pass
   //    it explicitly.
   const recordId = crypto.randomUUID();
-  let uploaded: PreparedImage | null = null;
+  let uploaded: PreparedImages | null = null;
 
   try {
     // 2. Image (optional)
@@ -294,9 +332,12 @@ export async function createRecord(
         mealType,
         totalCalories,
         thumbnailUrl: null, // legacy column: no longer used for new records
-        imageObjectKey: uploaded?.objectKey ?? null,
-        imageMimeType: uploaded?.mimeType ?? null,
-        imageSize: uploaded?.size ?? null,
+        imageObjectKey: uploaded?.thumbnail.objectKey ?? null,
+        imageMimeType: uploaded?.thumbnail.mimeType ?? null,
+        imageSize: uploaded?.thumbnail.size ?? null,
+        originalImageObjectKey: uploaded?.original.objectKey ?? null,
+        originalImageMimeType: uploaded?.original.mimeType ?? null,
+        originalImageSize: uploaded?.original.size ?? null,
         isDemo: input.isDemo ?? false,
       })
       .onConflictDoNothing({ target: [foodRecords.userId, foodRecords.sourceId] })
@@ -306,8 +347,13 @@ export async function createRecord(
     if (!rec) {
       // Source id collision — treat as idempotent: return the
       // existing row, but we still have a possibly-orphaned OSS
-      // object. Delete it and return the existing record.
-      await safeDelete(storage, uploaded?.objectKey ?? null, { reason: "sourceId-collision", userId });
+      // objects. Delete them and return the existing record.
+      if (uploaded) {
+        await Promise.all([
+          safeDelete(storage, uploaded.thumbnail.objectKey, { reason: "sourceId-collision", userId }),
+          safeDelete(storage, uploaded.original.objectKey, { reason: "sourceId-collision", userId }),
+        ]);
+      }
       if (input.sourceId) {
         const existing = await db
           .select()
@@ -335,13 +381,20 @@ export async function createRecord(
     return view;
   } catch (err) {
     // If we got past the upload step and the DB then failed, roll
-    // the OSS object back so we don't leave orphans.
-    if (uploaded?.objectKey) {
-      await safeDelete(storage, uploaded.objectKey, {
-        reason: "db-failed-after-upload",
-        userId,
-        recordId,
-      });
+    // the OSS objects back so we don't leave orphans.
+    if (uploaded) {
+      await Promise.all([
+        safeDelete(storage, uploaded.thumbnail.objectKey, {
+          reason: "db-failed-after-upload",
+          userId,
+          recordId,
+        }),
+        safeDelete(storage, uploaded.original.objectKey, {
+          reason: "db-failed-after-upload",
+          userId,
+          recordId,
+        }),
+      ]);
     }
     throw err;
   }
@@ -372,12 +425,13 @@ export async function updateRecord(
   // Default to "keep" so the absence of `thumbnailAction` doesn't
   // surprise the user.
   const action: ThumbnailAction = (rawInput as { thumbnailAction?: ThumbnailAction })?.thumbnailAction ?? { type: "keep" };
-  let newImage: PreparedImage | null = null;
-  const oldObjectKey: string | null = existing.record.imageObjectKey;
+  let newImages: PreparedImages | null = null;
+  const oldThumbnailKey: string | null = existing.record.imageObjectKey;
+  const oldOriginalKey: string | null = existing.record.originalImageObjectKey;
 
   try {
     if (action.type === "replace" && canStoreImages) {
-      newImage = await processAndUpload(userId, recordId, action.dataUrl, storage);
+      newImages = await processAndUpload(userId, recordId, action.dataUrl, storage);
     }
 
     await db
@@ -387,9 +441,12 @@ export async function updateRecord(
         mealType,
         totalCalories,
         thumbnailUrl: null,
-        imageObjectKey: action.type === "remove" ? null : newImage?.objectKey ?? oldObjectKey,
-        imageMimeType: action.type === "remove" ? null : newImage?.mimeType ?? existing.record.imageMimeType,
-        imageSize: action.type === "remove" ? null : newImage?.size ?? existing.record.imageSize,
+        imageObjectKey: action.type === "remove" ? null : newImages?.thumbnail.objectKey ?? oldThumbnailKey,
+        imageMimeType: action.type === "remove" ? null : newImages?.thumbnail.mimeType ?? existing.record.imageMimeType,
+        imageSize: action.type === "remove" ? null : newImages?.thumbnail.size ?? existing.record.imageSize,
+        originalImageObjectKey: action.type === "remove" ? null : newImages?.original.objectKey ?? oldOriginalKey,
+        originalImageMimeType: action.type === "remove" ? null : newImages?.original.mimeType ?? existing.record.originalImageMimeType,
+        originalImageSize: action.type === "remove" ? null : newImages?.original.size ?? existing.record.originalImageSize,
         isDemo: input.isDemo ?? false,
         updatedAt: new Date(),
       })
@@ -403,14 +460,25 @@ export async function updateRecord(
     }
 
     // After the DB commit succeeds, best-effort delete the old
-    // OSS object if we replaced or removed the image. A failure
+    // OSS objects if we replaced or removed the image. A failure
     // here is an orphan, not a user-visible error.
-    if (action.type !== "keep" && oldObjectKey && oldObjectKey !== newImage?.objectKey) {
-      await safeDelete(storage, oldObjectKey, {
-        reason: "replaced-or-removed",
-        userId,
-        recordId,
-      });
+    if (action.type !== "keep") {
+      const keysToDelete: string[] = [];
+      if (oldThumbnailKey && oldThumbnailKey !== newImages?.thumbnail.objectKey) {
+        keysToDelete.push(oldThumbnailKey);
+      }
+      if (oldOriginalKey && oldOriginalKey !== newImages?.original.objectKey) {
+        keysToDelete.push(oldOriginalKey);
+      }
+      await Promise.all(
+        keysToDelete.map((key) =>
+          safeDelete(storage, key, {
+            reason: "replaced-or-removed",
+            userId,
+            recordId,
+          })
+        )
+      );
     }
 
     const view = await getRecord(userId, recordId);
@@ -420,13 +488,20 @@ export async function updateRecord(
     return view;
   } catch (err) {
     // If we replaced the image and then the DB write failed, roll
-    // the new OSS object back.
-    if (newImage?.objectKey) {
-      await safeDelete(storage, newImage.objectKey, {
-        reason: "db-failed-after-replace",
-        userId,
-        recordId,
-      });
+    // the new OSS objects back.
+    if (newImages) {
+      await Promise.all([
+        safeDelete(storage, newImages.thumbnail.objectKey, {
+          reason: "db-failed-after-replace",
+          userId,
+          recordId,
+        }),
+        safeDelete(storage, newImages.original.objectKey, {
+          reason: "db-failed-after-replace",
+          userId,
+          recordId,
+        }),
+      ]);
     }
     throw err;
   }
@@ -455,21 +530,29 @@ export interface SignedImageUrl {
 export async function createSignedImageUrl(
   userId: string,
   recordId: string,
+  type: "thumbnail" | "original" = "thumbnail",
 ): Promise<SignedImageUrl> {
   const existing = await getRecordForUser(userId, recordId);
   if (!existing) {
     throw new ApiError(404, ErrorCode.RECORD_NOT_FOUND, "记录不存在");
   }
-  if (!existing.record.imageObjectKey) {
+
+  const objectKey = type === "original"
+    ? existing.record.originalImageObjectKey
+    : existing.record.imageObjectKey;
+
+  if (!objectKey) {
     throw new ApiError(404, ErrorCode.IMAGE_NOT_FOUND, "该记录没有图片");
   }
+
   try {
-    const url = await getObjectStorage().createSignedGetUrl(existing.record.imageObjectKey);
+    const url = await getObjectStorage().createSignedGetUrl(objectKey);
     return { url, expiresIn: 600 };
   } catch (err) {
     console.error("[records] signed URL failed", {
       userId,
       recordId,
+      type,
       err: (err as Error).message,
     });
     throw new ApiError(500, ErrorCode.IMAGE_URL_SIGN_FAILED, "无法生成图片访问地址");

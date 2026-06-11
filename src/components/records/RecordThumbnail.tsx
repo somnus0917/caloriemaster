@@ -41,15 +41,15 @@ export function RecordThumbnail({ record, size = "thumb", alt }: RecordThumbnail
       setSrc(null);
       return;
     }
-    const cached = signedUrlCache.get(record.id);
+    const cached = signedUrlCache.get(record.id, "thumbnail");
     if (cached) {
       setSrc(cached);
       return;
     }
-    fetchSignedImageUrl(record.id)
+    fetchSignedImageUrl(record.id, "thumbnail")
       .then(({ url, expiresIn }) => {
         if (cancelled) return;
-        signedUrlCache.set(record.id, url, expiresIn);
+        signedUrlCache.set(record.id, url, expiresIn, "thumbnail");
         setSrc(url);
       })
       .catch(() => {

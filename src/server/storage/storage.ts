@@ -28,6 +28,7 @@ export interface UploadedImage {
 
 export interface ObjectStorage {
   uploadRecordImage(input: UploadImageInput): Promise<UploadedImage>;
+  uploadOriginalImage(input: UploadImageInput): Promise<UploadedImage>;
   deleteObject(objectKey: string): Promise<void>;
   createSignedGetUrl(objectKey: string, ttlSeconds?: number): Promise<string>;
 }
@@ -46,4 +47,20 @@ export function buildThumbnailObjectKey(
 ): string {
   const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
   return `users/${userId}/records/${recordId}/thumbnail-${randomSuffix}.${ext}`;
+}
+
+/**
+ * Build the canonical object key for a record original image. The user
+ * never gets to pick any part of this path.
+ *
+ *   users/{userId}/records/{recordId}/original-{random}.{ext}
+ */
+export function buildOriginalImageObjectKey(
+  userId: string,
+  recordId: string,
+  mimeType: SupportedImageMime,
+  randomSuffix: string,
+): string {
+  const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/png" ? "png" : "webp";
+  return `users/${userId}/records/${recordId}/original-${randomSuffix}.${ext}`;
 }

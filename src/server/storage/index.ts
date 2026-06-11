@@ -14,6 +14,9 @@ class NullStorage implements ObjectStorage {
   async uploadRecordImage(): Promise<never> {
     throw new Error("OSS not configured");
   }
+  async uploadOriginalImage(): Promise<never> {
+    throw new Error("OSS not configured");
+  }
   async deleteObject(): Promise<void> {
     // Best-effort no-op: when we never uploaded anything, there is
     // nothing to delete.

@@ -4,6 +4,7 @@ import { HomePage } from "./pages/HomePage";
 import { CameraPage } from "./pages/CameraPage";
 import { ConfirmPage } from "./pages/ConfirmPage";
 import { HistoryPage } from "./pages/HistoryPage";
+import { EditPage } from "./pages/EditPage";
 import { AuthForm } from "./pages/AuthForm";
 import { TopNav } from "./components/layout/TopNav";
 import { BottomNav } from "./components/layout/BottomNav";
@@ -20,7 +21,7 @@ import { downloadCSV } from "./utils/csv";
 import { calculateFoodCalories } from "./utils/validation";
 import { hasPendingMigration } from "./services/migrate";
 
-type Screen = "home" | "camera" | "confirm" | "history";
+type Screen = "home" | "camera" | "confirm" | "history" | "edit";
 type AuthMode = "login" | "register";
 
 export function App() {
@@ -36,6 +37,7 @@ export function App() {
   const [setupOpen, setSetupOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [showMigration, setShowMigration] = useState(false);
+  const [editingRecord, setEditingRecord] = useState<Record | null>(null);
 
   const recognitionFlow = useRecognitionFlow({
     onError: (message) => showError(message),
@@ -48,7 +50,6 @@ export function App() {
     isBusy,
     startRecognition,
     loadDemo,
-    beginEdit,
     changeWeight,
     reset: resetRecognition,
   } = recognitionFlow;
@@ -123,10 +124,10 @@ export function App() {
     (id: string) => {
       const record = records.records.find((r) => r.id === id);
       if (!record) return;
-      beginEdit(record);
-      setScreen("confirm");
+      setEditingRecord(record);
+      setScreen("edit");
     },
-    [records.records, beginEdit],
+    [records.records],
   );
 
   const handleDelete = useCallback(
@@ -180,6 +181,30 @@ export function App() {
     setScreen("camera");
   }, [resetRecognition]);
 
+  const handleEditSave = useCallback(
+    (id: string, weights: number[]) => {
+      if (!editingRecord) return;
+      records
+        .updateRecord(id, editingRecord.foods as Food[], weights)
+        .then((r) => {
+          if (r) {
+            showToast("记录已更新");
+            setEditingRecord(null);
+            setScreen("home");
+          }
+        })
+        .catch((err: Error) => {
+          showError(err.message || "保存失败");
+        });
+    },
+    [editingRecord, records, showToast, showError],
+  );
+
+  const handleEditBack = useCallback(() => {
+    setEditingRecord(null);
+    setScreen("home");
+  }, []);
+
   const handleExport = useCallback(() => {
     if (!records.records.length) {
       showToast("暂无记录可导出");
@@ -231,7 +256,7 @@ export function App() {
     );
   }
 
-  const isFullFlow = screen === "camera" || screen === "confirm";
+  const isFullFlow = screen === "camera" || screen === "confirm" || screen === "edit";
   const totalForConfirm = recognition
     ? recognition.result.foods.reduce(
         (sum, food, i) => sum + calculateFoodCalories(food, recognition.weights[i] ?? food.weight_g),
@@ -289,10 +314,22 @@ export function App() {
           onBack={() => setScreen("home")}
         />
       )}
+      {screen === "edit" && editingRecord && (
+        <EditPage
+          record={editingRecord}
+          onSave={handleEditSave}
+          onBack={handleEditBack}
+          saving={isBusy}
+        />
+      )}
 
-      <div className={isFullFlow ? "bottom-bar hidden" : "bottom-bar"}>
-        <BottomNav onHome={() => setScreen("home")} onHistory={() => setScreen("history")} />
-      </div>
+      {!isFullFlow ? (
+        <BottomNav
+          active={screen === "history" ? "history" : "home"}
+          onHome={() => setScreen("home")}
+          onHistory={() => setScreen("history")}
+        />
+      ) : null}
 
       <LoadingOverlay show={isBusy} stage={status} />
 

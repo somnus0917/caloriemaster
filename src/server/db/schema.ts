@@ -86,6 +86,13 @@ export const foodRecords = pgTable(
     imageObjectKey: text("image_object_key"),
     imageMimeType: varchar("image_mime_type", { length: 30 }),
     imageSize: integer("image_size"),
+    /**
+     * OSS object key for the original image (higher quality).
+     * Stored separately so we can offer a "view full size" option.
+     */
+    originalImageObjectKey: text("original_image_object_key"),
+    originalImageMimeType: varchar("original_image_mime_type", { length: 30 }),
+    originalImageSize: integer("original_image_size"),
     isDemo: boolean("is_demo").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: false }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: false }).defaultNow().notNull(),

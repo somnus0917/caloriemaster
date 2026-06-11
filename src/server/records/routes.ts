@@ -92,8 +92,9 @@ export async function registerRecordRoutes(app: FastifyInstance): Promise<void> 
   app.get("/api/records/:id/image-url", { preHandler: requireAuth }, async (request, reply) => {
     const user = requireAuthedUser(request);
     const { id } = request.params as { id: string };
+    const type = (request.query as { type?: string })?.type === "original" ? "original" : "thumbnail";
     try {
-      const signed = await createSignedImageUrl(user.id, id);
+      const signed = await createSignedImageUrl(user.id, id, type);
       return reply.send(signed);
     } catch (err) {
       return handleApiError(reply, err);

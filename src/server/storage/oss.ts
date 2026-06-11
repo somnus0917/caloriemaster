@@ -17,6 +17,7 @@ import { randomBytes } from "node:crypto";
 import OSS from "ali-oss";
 import {
   buildThumbnailObjectKey,
+  buildOriginalImageObjectKey,
   type ObjectStorage,
   type SupportedImageMime,
   type UploadImageInput,
@@ -106,6 +107,29 @@ class OssStorage implements ObjectStorage {
       headers,
       // `x-oss-object-acl` is intentionally NOT set: the bucket's
       // default ACL is private, and we never want a public object.
+    });
+    return {
+      objectKey: result.name ?? objectKey,
+      size: typeof result.res?.size === "number" ? result.res.size : input.data.length,
+      mimeType: input.mimeType,
+      etag: typeof result.res?.headers?.etag === "string" ? result.res.headers.etag : undefined,
+    };
+  }
+
+  async uploadOriginalImage(input: UploadImageInput): Promise<UploadedImage> {
+    const suffix = randomBytes(6).toString("hex");
+    const objectKey = buildOriginalImageObjectKey(
+      input.userId,
+      input.recordId,
+      input.mimeType as SupportedImageMime,
+      suffix,
+    );
+    const headers: Record<string, string> = {
+      "Content-Type": input.mimeType,
+      "Cache-Control": "private, max-age=3600",
+    };
+    const result = await this.client.put(objectKey, input.data, {
+      headers,
     });
     return {
       objectKey: result.name ?? objectKey,

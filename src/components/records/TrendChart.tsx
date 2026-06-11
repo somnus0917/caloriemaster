@@ -36,6 +36,19 @@ export function TrendChart({ records, dailyGoal, dailyLimit, onBarSelect }: Tren
   const goalY = PADDING + CHART_HEIGHT - (dailyGoal / maxValue) * CHART_HEIGHT;
   const limitY = PADDING + CHART_HEIGHT - (dailyLimit / maxValue) * CHART_HEIGHT;
   const barWidth = (WIDTH - PADDING * 2) / 7 - GAP;
+  const pointFor = (day: DayStat, index: number) => {
+    const slot = (WIDTH - PADDING * 2) / 7;
+    const x = PADDING + index * slot + slot / 2;
+    const barHeight = Math.max(2, (day.calories / maxValue) * CHART_HEIGHT);
+    const y = PADDING + CHART_HEIGHT - barHeight;
+    return { x, y, barHeight };
+  };
+  const linePoints = week
+    .map((day, index) => {
+      const { x, y } = pointFor(day, index);
+      return `${x},${y}`;
+    })
+    .join(" ");
 
   const handleKey = (e: KeyboardEvent<SVGGElement>, date: string, calories: number) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -55,6 +68,14 @@ export function TrendChart({ records, dailyGoal, dailyLimit, onBarSelect }: Tren
           role="img"
           aria-label="近 7 日热量趋势图，点击柱状图可查看当日记录"
         >
+          <line
+            x1={PADDING}
+            x2={WIDTH - PADDING}
+            y1={PADDING + CHART_HEIGHT}
+            y2={PADDING + CHART_HEIGHT}
+            stroke="var(--c-border)"
+            opacity={0.9}
+          />
           <line
             x1={PADDING}
             x2={WIDTH - PADDING}
@@ -91,14 +112,22 @@ export function TrendChart({ records, dailyGoal, dailyLimit, onBarSelect }: Tren
           >
             上限
           </text>
+          <polyline
+            points={linePoints}
+            fill="none"
+            stroke="var(--c-green)"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
           {week.map((day, index) => {
-            const x = PADDING + index * ((WIDTH - PADDING * 2) / 7) + GAP / 2;
-            const barHeight = Math.max(2, (day.calories / maxValue) * CHART_HEIGHT);
-            const y = PADDING + CHART_HEIGHT - barHeight;
-            const color = day.isToday ? "var(--c-green)" : "var(--c-muted)";
+            const slot = (WIDTH - PADDING * 2) / 7;
+            const x = PADDING + index * slot + GAP / 2;
+            const point = pointFor(day, index);
+            const color = day.isToday ? "var(--c-green)" : "var(--c-green)";
             const cap =
               day.calories > dailyLimit ? (
-                <circle cx={x + barWidth / 2} cy={y - 5} r={3} fill="var(--c-red)" />
+                <circle cx={point.x} cy={point.y - 5} r={3} fill="var(--c-red)" />
               ) : null;
             return (
               <g
@@ -121,16 +150,34 @@ export function TrendChart({ records, dailyGoal, dailyLimit, onBarSelect }: Tren
                 />
                 <rect
                   x={x}
-                  y={y}
+                  y={point.y}
                   width={barWidth}
-                  height={barHeight}
+                  height={point.barHeight}
                   rx={5}
                   fill={color}
-                  opacity={day.isToday ? 1 : 0.45}
+                  opacity={day.isToday ? 0.28 : 0.18}
                 />
                 {cap}
+                <circle
+                  cx={point.x}
+                  cy={point.y}
+                  r={3.2}
+                  fill="var(--c-bg)"
+                  stroke="var(--c-green)"
+                  strokeWidth={2}
+                />
                 <text
-                  x={x + barWidth / 2}
+                  x={point.x}
+                  y={Math.max(10, point.y - 10)}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fontWeight={day.isToday ? 700 : 500}
+                  fill={day.isToday ? "var(--c-green)" : "var(--c-muted)"}
+                >
+                  {day.calories}
+                </text>
+                <text
+                  x={point.x}
                   y={112}
                   textAnchor="middle"
                   fontSize={10}

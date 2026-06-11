@@ -7,6 +7,7 @@ interface FoodCardProps {
   weight: number;
   aiWeight: number;
   onWeightChange: (next: number) => void;
+  editMode?: boolean;
 }
 
 const CONFIDENCE_LABEL: Record<string, string> = {
@@ -26,7 +27,7 @@ function formatMacro(label: string, value: number | null | undefined): string | 
   return `${label} ${value.toFixed(1)}g/100g`;
 }
 
-export function FoodCard({ food, weight, aiWeight, onWeightChange }: FoodCardProps) {
+export function FoodCard({ food, weight, aiWeight, onWeightChange, editMode = false }: FoodCardProps) {
   const calories = calculateFoodCalories(food, weight);
   const sourceText = food.cal_source === "boohee" ? "薄荷数据" : "AI 估算";
   const lightText = LIGHT_LABEL[String(food.health_light ?? 0)] || "无红绿灯";
@@ -48,20 +49,26 @@ export function FoodCard({ food, weight, aiWeight, onWeightChange }: FoodCardPro
         <span className="food-name" title={food.name}>
           {food.name}
         </span>
-        <span className={`badge badge-${food.confidence}`}>
-          {CONFIDENCE_LABEL[food.confidence] || "中置信"}
-        </span>
+        {!editMode && (
+          <span className={`badge badge-${food.confidence}`}>
+            {CONFIDENCE_LABEL[food.confidence] || "中置信"}
+          </span>
+        )}
         <span className="calories">
           <span className="cal-num">{calories}</span> kcal
         </span>
       </div>
       <div className="food-meta">
-        <span
-          className={`meta-chip${food.cal_source === "boohee" ? " source-boohee" : ""}`}
-        >
-          {sourceText} · {Math.round(food.calories_per_100g)} kcal/100g
-        </span>
-        <span className={`meta-chip light-${food.health_light ?? 0}`}>{lightText}</span>
+        {!editMode && (
+          <>
+            <span
+              className={`meta-chip${food.cal_source === "boohee" ? " source-boohee" : ""}`}
+            >
+              {sourceText} · {Math.round(food.calories_per_100g)} kcal/100g
+            </span>
+            <span className={`meta-chip light-${food.health_light ?? 0}`}>{lightText}</span>
+          </>
+        )}
         {macros}
       </div>
       <WeightAdjuster

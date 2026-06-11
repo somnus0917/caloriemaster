@@ -29,6 +29,9 @@ export interface RecordDTO {
   hasImage: boolean;
   imageMimeType: string | null;
   imageSize: number | null;
+  hasOriginalImage: boolean;
+  originalImageMimeType: string | null;
+  originalImageSize: number | null;
   isDemo: boolean;
   createdAt: string;
   updatedAt: string;
@@ -112,6 +115,7 @@ export interface SignedImageUrl {
   expiresIn: number;
 }
 
-export async function fetchSignedImageUrl(recordId: string): Promise<SignedImageUrl> {
-  return apiRequest<SignedImageUrl>(`/api/records/${encodeURIComponent(recordId)}/image-url`);
+export async function fetchSignedImageUrl(recordId: string, type: "thumbnail" | "original" = "thumbnail"): Promise<SignedImageUrl> {
+  const params = type === "original" ? "?type=original" : "";
+  return apiRequest<SignedImageUrl>(`/api/records/${encodeURIComponent(recordId)}/image-url${params}`);
 }

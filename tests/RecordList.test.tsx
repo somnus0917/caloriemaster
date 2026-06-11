@@ -28,6 +28,7 @@ const RECORD: Record = {
   totalCalories: 174,
   thumbnailUrl: null,
   hasImage: false,
+  hasOriginalImage: false,
   isDemo: false,
 };
 

@@ -70,9 +70,15 @@ export function HomePage({
   return (
     <main className="screen active">
       <section className={`hero-total ${heroState}`.trim()}>
+        <div className="hero-plate" aria-hidden="true">
+          <span>🥗</span>
+        </div>
         <div className="total-row">
           <div>
-            <div className="goal-copy">今日热量</div>
+            <div className="goal-copy goal-title">
+              <span className="goal-icon" aria-hidden="true">✣</span>
+              今日热量
+            </div>
             <div>
               <span className="total-kcal">{todayTotal}</span> kcal
             </div>
@@ -87,14 +93,17 @@ export function HomePage({
         </div>
         <div className="stat-grid">
           <div className="stat-chip">
+            <span className="stat-icon stat-icon-goal" aria-hidden="true">◎</span>
             <div className="stat-label">每日目标</div>
             <div className="stat-value">{dailyGoal}</div>
           </div>
           <div className="stat-chip">
+            <span className="stat-icon stat-icon-limit" aria-hidden="true">◈</span>
             <div className="stat-label">摄入上限</div>
             <div className="stat-value">{dailyLimit}</div>
           </div>
           <div className="stat-chip">
+            <span className="stat-icon stat-icon-left" aria-hidden="true">◔</span>
             <div className="stat-label">剩余额度</div>
             <div className="stat-value">
               {remaining >= 0 ? remaining : `+${Math.abs(remaining)}`}
@@ -102,11 +111,15 @@ export function HomePage({
           </div>
         </div>
         <div className="status-strip">
-          <span>{intakeStatus}</span>
+          <span className="status-copy">
+            <span aria-hidden="true">⚑</span>
+            {intakeStatus}
+          </span>
           <span>{goalPct}%</span>
         </div>
         <button className="btn-solid" type="button" onClick={onGoCamera}>
-          + 记录一餐
+          <span aria-hidden="true">＋</span>
+          记录一餐
         </button>
       </section>
 
@@ -114,7 +127,7 @@ export function HomePage({
         <div className="section-heading">
           <div className="text-lg">今日记录</div>
           <button className="btn-ghost" type="button" onClick={onGoHistory}>
-            全部历史
+            全部历史 ›
           </button>
         </div>
         <RecordList
