@@ -187,6 +187,8 @@ export function App() {
         <AuthForm
           mode={authMode}
           onSwitch={() => setAuthMode((m) => (m === "login" ? "register" : "login"))}
+          onLogin={auth.login}
+          onRegister={auth.register}
         />
       </div>
     );

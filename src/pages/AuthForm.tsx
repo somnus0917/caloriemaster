@@ -1,14 +1,20 @@
 import { useState, type FormEvent } from "react";
-import { useAuth } from "../hooks/useAuth";
 import { ApiError } from "../services/http";
 
 interface AuthFormProps {
   mode: "login" | "register";
   onSwitch: () => void;
+  /**
+   * The login / register actions. They MUST come from the same
+   * `useAuth()` instance that App uses to decide whether to show
+   * this form — otherwise the user sees "still on the auth screen"
+   * after a successful registration.
+   */
+  onLogin: (email: string, password: string) => Promise<void>;
+  onRegister: (email: string, password: string) => Promise<void>;
 }
 
-export function AuthForm({ mode, onSwitch }: AuthFormProps) {
-  const { login, register } = useAuth();
+export function AuthForm({ mode, onSwitch, onLogin, onRegister }: AuthFormProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -23,9 +29,9 @@ export function AuthForm({ mode, onSwitch }: AuthFormProps) {
     setSubmitting(true);
     try {
       if (isLogin) {
-        await login(email.trim(), password);
+        await onLogin(email.trim(), password);
       } else {
-        await register(email.trim(), password);
+        await onRegister(email.trim(), password);
       }
     } catch (err) {
       if (err instanceof ApiError) {
