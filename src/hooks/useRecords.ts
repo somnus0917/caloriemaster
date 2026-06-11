@@ -100,14 +100,20 @@ export interface UseRecordsReturn {
   seedDemoIfEmpty: () => Promise<boolean>;
 }
 
-export function useRecords(): UseRecordsReturn {
+export function useRecords(enabled: boolean = true): UseRecordsReturn {
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const recordsRef = useRef<Record[]>(records);
   recordsRef.current = records;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
 
   const reload = useCallback(async () => {
+    if (!enabledRef.current) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -127,7 +133,7 @@ export function useRecords(): UseRecordsReturn {
 
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, enabled]);
 
   const addRecord = useCallback(
     async (

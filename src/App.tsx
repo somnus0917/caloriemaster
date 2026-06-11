@@ -25,8 +25,11 @@ type AuthMode = "login" | "register";
 
 export function App() {
   const auth = useAuth();
-  const records = useRecords();
-  const { settings, update: updateSettings } = useSettings();
+  // Gate data hooks on auth status so they don't fire 401 requests
+  // before the user logs in. Without this, the initial fetch fails,
+  // state stays null, and the app appears stuck on a loading spinner.
+  const records = useRecords(auth.status === "authenticated");
+  const { settings, update: updateSettings } = useSettings(auth.status === "authenticated");
   const { toasts, showError, showToast, showUndo, dismiss } = useToast();
 
   const [screen, setScreen] = useState<Screen>("home");
