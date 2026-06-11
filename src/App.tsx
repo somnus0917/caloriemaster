@@ -62,10 +62,28 @@ export function App() {
   useEffect(() => {
     if (typeof navigator === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
+
+    const unregisterLegacy = async () => {
+      // Force-remove any pre-existing SW (especially old CACHE_NAME
+      // values) so a browser with a stale bundle picks up the latest
+      // JS and AuthForm code on next reload.
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(
+        regs.map((r) =>
+          r.unregister().catch(() => undefined),
+        ),
+      );
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k).catch(() => undefined)));
+      }
+    };
+
     const onLoad = () => {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .catch(() => undefined);
+      void unregisterLegacy().then(() => {
+        // Re-register so future deploys are still served from cache.
+        navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+      });
     };
     window.addEventListener("load", onLoad);
     return () => window.removeEventListener("load", onLoad);

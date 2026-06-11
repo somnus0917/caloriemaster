@@ -1,17 +1,18 @@
 /**
  * CalorieMaster Service Worker
  *
- * Strategy: cache-first for same-origin shell assets (HTML/CSS/JS/manifest),
- * bypass cache for cross-origin API calls (Qwen / 薄荷).
- * - install: precache the application shell
- * - fetch: cache-first → network fallback → 503 for navigation when offline
+ * Strategy:
+ *   - install: precache the app shell (index.html, manifest).
+ *   - fetch:
+ *       * GET /api/*        → always go to network (never cache)
+ *       * GET other same-origin → cache-first with stale-while-revalidate
+ *
+ * The SW is intentionally minimal: the app is mostly a thin client
+ * talking to the server. Caching API responses would break the auth
+ * and isolation guarantees.
  */
-const CACHE_NAME = "caloriemaster-v1";
-const SHELL_URLS = [
-  "/",
-  "/index.html",
-  "/manifest.json",
-];
+const CACHE_NAME = "caloriemaster-v2";
+const SHELL_URLS = ["./", "./manifest.json"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,36 +38,31 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // Skip cross-origin API calls (Qwen / 薄荷) — go straight to network.
-  if (
-    url.host.includes("dashscope.aliyuncs.com") ||
-    url.host.includes("boohee.com")
-  ) {
+  // Never cache or short-circuit API traffic — the server is the source
+  // of truth and must always see credentialed requests.
+  if (url.pathname.startsWith("/api/")) {
     return;
   }
 
-  // Same-origin: cache-first.
+  // Skip cross-origin traffic (Aliyun OSS image bytes etc.). The
+  // browser's normal network stack handles these.
+  if (url.origin !== self.location.origin) {
+    return;
+  }
+
+  // Cache-first with stale-while-revalidate for same-origin GETs.
   event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
-      return fetch(req)
+    caches.open(CACHE_NAME).then(async (cache) => {
+      const cached = await cache.match(req);
+      const networkFetch = fetch(req)
         .then((response) => {
-          if (
-            response &&
-            response.status === 200 &&
-            response.type === "basic"
-          ) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+          if (response && response.status === 200 && response.type === "basic") {
+            cache.put(req, response.clone()).catch(() => undefined);
           }
           return response;
         })
-        .catch(() => {
-          // Offline navigation fallback: return cached index.html so SPA
-          // routing can still work.
-          if (req.mode === "navigate") return caches.match("/index.html");
-          return new Response("", { status: 504, statusText: "Offline" });
-        });
+        .catch(() => cached ?? Response.error());
+      return cached ?? networkFetch;
     }),
   );
 });

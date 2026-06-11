@@ -104,10 +104,21 @@ export async function apiRequest<T>(url: string, options: ApiRequestOptions = {}
     response = await fetch(url, init);
   } catch (err) {
     clearTimeout(timer);
+    // Log full detail so we can see WHY the request failed: CORS,
+    // DNS, offline, AbortError, etc.
+    console.error("[apiRequest] fetch failed", {
+      url,
+      err: err instanceof Error ? { name: err.name, message: err.message } : err,
+    });
     if (err instanceof Error && err.name === "AbortError") {
       throw new ApiError(`请求超时（${Math.round(timeoutMs / 1000)}s）`, 0, "UPSTREAM_TIMEOUT");
     }
-    throw new ApiError("网络错误，请检查连接后重试", 0);
+    throw new ApiError(
+      err instanceof Error && err.message
+        ? `网络错误：${err.message}`
+        : "网络错误，请检查连接后重试",
+      0,
+    );
   }
   clearTimeout(timer);
 
