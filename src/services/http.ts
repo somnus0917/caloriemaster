@@ -64,6 +64,9 @@ const STATUS_FALLBACK: Record<number, string> = {
 
 export function describeApiError(status: number, payload?: ApiErrorPayload): string {
   const code = payload?.error?.code;
+  if (code === "INVALID_REQUEST" && typeof payload?.error?.message === "string" && payload.error.message) {
+    return payload.error.message;
+  }
   if (code && ERROR_CODE_MESSAGES[code]) return ERROR_CODE_MESSAGES[code];
   if (typeof payload?.error?.message === "string" && payload.error.message) {
     return payload.error.message;

@@ -61,6 +61,11 @@ set +a
 : "${PORT:=3000}"
 : "${DATABASE_URL:=postgresql://caloriemaster:caloriemaster@localhost:5432/caloriemaster}"
 : "${APP_ORIGIN:=http://localhost:5173}"
+: "${POSTGRES_USER:=caloriemaster}"
+: "${POSTGRES_PASSWORD:=caloriemaster}"
+: "${POSTGRES_DB:=caloriemaster}"
+: "${POSTGRES_IMAGE:=postgres:16-alpine}"
+export NODE_ENV PORT DATABASE_URL APP_ORIGIN POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB POSTGRES_IMAGE
 
 # ===== 依赖 ============================================================
 ensure_deps() {
@@ -77,6 +82,21 @@ docker_daemon_ok() {
   return 0
 }
 
+docker_pg_container_exists() {
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^caloriemaster-postgres$'
+}
+
+docker_pg_run_failed() {
+  local output="$1"
+  err "Docker 启动 PostgreSQL 失败。"
+  printf "%s\n" "$output" | sed 's/^/  /'
+  if printf "%s\n" "$output" | grep -qi "pull rate limit"; then
+    err "Docker Hub 拉取限流。请先执行 docker login 后重试，或改用可访问的镜像：POSTGRES_IMAGE=<registry>/postgres:16-alpine ./start.sh"
+  else
+    err "请检查 Docker 是否能拉取/运行镜像，或设置 POSTGRES_IMAGE 指向兼容官方 postgres 环境变量的镜像。"
+  fi
+}
+
 pg_detect() {
   if docker_daemon_ok; then
     echo "docker"
@@ -90,6 +110,10 @@ pg_detect() {
     echo "system"
     return
   fi
+  if command -v docker >/dev/null 2>&1; then
+    echo "docker-unavailable"
+    return
+  fi
   echo "none"
 }
 
@@ -98,6 +122,7 @@ pg_running() {
   case "$PG_BACKEND" in
     docker)
       docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^caloriemaster-postgres$' || return 1
+      docker exec caloriemaster-postgres pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" || return 1
       ;;
     brew)
       /opt/homebrew/opt/postgresql@16/bin/pg_isready -q -h localhost -p 5432 || return 1
@@ -111,27 +136,43 @@ pg_running() {
   esac
 }
 
+pg_running_stable() {
+  pg_running || return 1
+  sleep 2
+  pg_running || return 1
+}
+
 pg_start() {
-  if pg_running; then return 0; fi
+  if [[ "${SKIP_DB_BOOTSTRAP:-false}" == "true" ]]; then
+    info "跳过本地 PostgreSQL 启动，直接使用 DATABASE_URL"
+    return 0
+  fi
+
+  if pg_running_stable; then return 0; fi
   case "$PG_BACKEND" in
     docker)
-      info "用 Docker 启动 PostgreSQL..."
-      if ! docker run -d --rm --name caloriemaster-postgres \
-        -e POSTGRES_USER=caloriemaster \
-        -e POSTGRES_PASSWORD=caloriemaster \
-        -e POSTGRES_DB=caloriemaster \
-        -p 5432:5432 \
-        postgres:16-alpine; then
-        warn "Docker 启动失败；fallback 到 brew PostgreSQL"
-        PG_BACKEND="brew"
-        if ! command -v /opt/homebrew/opt/postgresql@16/bin/psql >/dev/null 2>&1; then
-          err "brew PostgreSQL 也没装。请启动 Docker Desktop 或 brew install postgresql@16"
+      info "用 Docker 启动 PostgreSQL (${POSTGRES_IMAGE})..."
+      if docker_pg_container_exists; then
+        if ! run_output="$(docker start caloriemaster-postgres 2>&1)"; then
+          docker_pg_run_failed "$run_output"
           exit 1
         fi
-        info "用 brew PostgreSQL 启动..."
-        LC_ALL="en_US.UTF-8" /opt/homebrew/opt/postgresql@16/bin/pg_ctl \
-          -D /opt/homebrew/var/postgresql@16 -l /tmp/pglog.log start
+      elif ! run_output="$(docker run -d --rm --name caloriemaster-postgres \
+          -e POSTGRES_USER="$POSTGRES_USER" \
+          -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+          -e POSTGRES_DB="$POSTGRES_DB" \
+          -p 5432:5432 \
+          "$POSTGRES_IMAGE" 2>&1)"; then
+        docker_pg_run_failed "$run_output"
+        exit 1
       fi
+      ;;
+    docker-unavailable)
+      err "检测到 docker 命令，但当前用户无法连接 Docker daemon。"
+      docker info 2>&1 | sed 's/^/  /' || true
+      err "处理方式：启动 Docker 服务，或在 Linux 上将当前用户加入 docker 组后重新登录：sudo usermod -aG docker \"$USER\""
+      err "也可以安装本机 PostgreSQL 客户端/服务，或使用外部 DATABASE_URL 并设置 SKIP_DB_BOOTSTRAP=true。"
+      exit 1
       ;;
     brew)
       info "用 brew PostgreSQL 启动..."
@@ -143,19 +184,29 @@ pg_start() {
       warn "假设你的 PostgreSQL 已经能用 systemctl 或 service 启动"
       ;;
     *)
-      err "没找到 PostgreSQL。请安装 brew postgres@16 或 docker"
+      err "没找到 PostgreSQL。请安装 PostgreSQL，或安装并启动 Docker。"
+      err "macOS: brew install postgresql@16；Linux: 用系统包管理器安装 postgresql，或 sudo systemctl start docker。"
       exit 1
       ;;
   esac
-  for i in $(seq 1 30); do
-    if pg_running; then ok "PostgreSQL 已启动"; return 0; fi
+  for i in $(seq 1 60); do
+    if pg_running_stable; then ok "PostgreSQL 已启动"; return 0; fi
     sleep 1
   done
-  err "PostgreSQL 30s 内未就绪"
+  err "PostgreSQL 60s 内未稳定就绪"
   exit 1
 }
 
 pg_ensure_db() {
+  if [[ "${SKIP_DB_BOOTSTRAP:-false}" == "true" ]]; then
+    return 0
+  fi
+
+  if [[ "$PG_BACKEND" == "docker" ]]; then
+    # The official Postgres image creates this user and database on first boot.
+    return 0
+  fi
+
   case "$PG_BACKEND" in
     brew) PSQL="/opt/homebrew/opt/postgresql@16/bin/psql" ;;
     *)    PSQL="psql" ;;
@@ -201,6 +252,8 @@ CalorieMaster 一键启动脚本
   PG backend: ${PG_BACKEND}
   DATABASE_URL: ${DATABASE_URL}
   APP_ORIGIN: ${APP_ORIGIN}
+  POSTGRES_IMAGE: ${POSTGRES_IMAGE}
+  SKIP_DB_BOOTSTRAP: ${SKIP_DB_BOOTSTRAP:-false}
 EOF
 }
 
@@ -299,34 +352,58 @@ cmd_smoke() {
   # 在 dev 模式下，CSRF 接受 Origin: localhost:5173 / 127.0.0.1:5173 / 缺失。
   # 直接 curl 3000 时必须显式带 Origin 与 APP_ORIGIN 匹配，否则 403。
   local ORIGIN="${APP_ORIGIN:-http://localhost:5173}"
+  local SMOKE_EMAIL="smoke+$(date +%s)@example.com"
 
-  info "1) GET /api/health"
-  curl -s http://127.0.0.1:3000/api/health | head -1
-  echo
+  smoke_request() {
+    local label="$1"
+    shift
+    local body_file status
+    body_file="$(mktemp)"
 
-  info "2) POST /api/auth/register (smoke@example.com)"
+    info "$label"
+    if ! status="$(curl -sS -o "$body_file" -w "%{http_code}" "$@")"; then
+      cat "$body_file"
+      rm -f "$body_file"
+      err "冒烟测试失败: $label 请求失败"
+      exit 1
+    fi
+
+    head -1 "$body_file"
+    echo
+    if [[ ! "$status" =~ ^2 ]]; then
+      rm -f "$body_file"
+      err "冒烟测试失败: $label 返回 HTTP $status"
+      exit 1
+    fi
+    rm -f "$body_file"
+  }
+
+  smoke_request "1) GET /api/health" \
+    http://127.0.0.1:3000/api/health
+
   rm -f /tmp/cm-smoke-cookies.txt
-  curl -s -c /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/auth/register \
+  smoke_request "2) POST /api/auth/register ($SMOKE_EMAIL)" \
+    -c /tmp/cm-smoke-cookies.txt \
+    -X POST http://127.0.0.1:3000/api/auth/register \
     -H "Content-Type: application/json" \
     -H "Origin: $ORIGIN" \
-    -d '{"email":"smoke@example.com","password":"password1234"}' | head -1
-  echo
+    -d "{\"email\":\"$SMOKE_EMAIL\",\"password\":\"password1234\"}"
 
-  info "3) GET /api/auth/me (with cookie)"
-  curl -s -b /tmp/cm-smoke-cookies.txt http://127.0.0.1:3000/api/auth/me | head -1
-  echo
+  smoke_request "3) GET /api/auth/me (with cookie)" \
+    -b /tmp/cm-smoke-cookies.txt \
+    http://127.0.0.1:3000/api/auth/me
 
-  info "4) POST /api/records (no image)"
-  curl -s -b /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/records \
+  smoke_request "4) POST /api/records (no image)" \
+    -b /tmp/cm-smoke-cookies.txt \
+    -X POST http://127.0.0.1:3000/api/records \
     -H "Content-Type: application/json" \
     -H "Origin: $ORIGIN" \
-    -d '{"timestamp":1700000000000,"mealType":"午餐","items":[{"name":"测试","weightG":100,"caloriesPer100g":100}]}' | head -1
-  echo
+    -d '{"timestamp":1700000000000,"mealType":"午餐","items":[{"name":"测试","weightG":100,"caloriesPer100g":100}]}'
 
-  info "5) POST /api/auth/logout"
-  curl -s -b /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/auth/logout \
-    -H "Origin: $ORIGIN" | head -1
-  echo
+  smoke_request "5) POST /api/auth/logout" \
+    -b /tmp/cm-smoke-cookies.txt \
+    -X POST http://127.0.0.1:3000/api/auth/logout \
+    -H "Origin: $ORIGIN"
 
   ok "冒烟测试完成"
 }

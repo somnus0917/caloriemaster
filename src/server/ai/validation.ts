@@ -15,7 +15,7 @@ export const WEIGHT_MAX = 1000;
 export const CAL_MIN = 0;
 export const CAL_MAX = 1000;
 export const NAME_MAX = 50;
-export const THUMBNAIL_MAX = 32 * 1024; // 32 KB for a 64px jpeg — generous
+export const THUMBNAIL_MAX = 1024 * 1024; // 1 MB Data URL for the client-side 512px jpeg.
 export const NOTE_MAX = 500;
 
 const ALLOWED_PREFIXES = [

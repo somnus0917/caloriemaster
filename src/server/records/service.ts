@@ -169,6 +169,7 @@ export async function getRecord(
 function validateRecordInput(raw: unknown): RecordInput {
   const parsed = RecordInputSchema.safeParse(raw);
   if (!parsed.success) {
+    console.warn("[records] invalid record input", parsed.error.issues);
     throw new ApiError(400, ErrorCode.INVALID_REQUEST, "记录数据不合法");
   }
   return parsed.data;

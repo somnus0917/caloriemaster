@@ -15,6 +15,13 @@
       "when": 1781103686748,
       "tag": "0001_oss_image_columns",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1781190176631,
+      "tag": "0002_original_image_columns",
+      "breakpoints": true
     }
   ]
 }
