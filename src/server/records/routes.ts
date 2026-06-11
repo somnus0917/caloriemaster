@@ -62,8 +62,8 @@ export async function registerRecordRoutes(app: FastifyInstance): Promise<void> 
     const user = requireAuthedUser(request);
     const { id } = request.params as { id: string };
     try {
-      const removed = await deleteRecord(user.id, id);
-      return reply.send({ record: removed });
+      const result = await deleteRecord(user.id, id);
+      return reply.send(result);
     } catch (err) {
       return handleApiError(reply, err);
     }

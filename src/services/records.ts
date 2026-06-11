@@ -94,11 +94,10 @@ export async function updateRecord(
   return record;
 }
 
-export async function deleteRecord(id: string): Promise<RecordDTO> {
-  const { record } = await apiRequest<{ record: RecordDTO }>(`/api/records/${encodeURIComponent(id)}`, {
+export async function deleteRecord(id: string): Promise<{ deletedId: string }> {
+  return apiRequest<{ deletedId: string }>(`/api/records/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
-  return record;
 }
 
 export async function importRecords(records: RecordInput[]): Promise<{ imported: number; skipped: number }> {

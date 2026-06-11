@@ -46,13 +46,7 @@ export function getObjectStorage(): ObjectStorage {
 }
 
 export function isStorageConfigured(): boolean {
-  const config = loadConfig();
-  return Boolean(
-    config.OSS_REGION &&
-      config.OSS_BUCKET &&
-      config.OSS_ACCESS_KEY_ID &&
-      config.OSS_ACCESS_KEY_SECRET,
-  );
+  return !(getObjectStorage() instanceof NullStorage);
 }
 
 /**

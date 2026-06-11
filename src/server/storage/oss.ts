@@ -47,11 +47,33 @@ interface OssClientLike {
   signatureUrl(name: string, options: { method: string; expires: number }): string;
 }
 
+function normalizeEndpointForSdk(endpoint: string, bucket: string): { endpoint: string; cname: boolean } {
+  try {
+    const url = new URL(endpoint);
+    const bucketPrefix = `${bucket}.`;
+    if (url.hostname.startsWith(bucketPrefix) && url.hostname.endsWith(".aliyuncs.com")) {
+      url.hostname = url.hostname.slice(bucketPrefix.length);
+      return { endpoint: url.toString().replace(/\/$/, ""), cname: false };
+    }
+    if (url.hostname.endsWith(".aliyuncs.com")) {
+      return { endpoint, cname: false };
+    }
+    return { endpoint, cname: true };
+  } catch {
+    return { endpoint, cname: false };
+  }
+}
+
 export function createOssStorage(config: OssConfig): ObjectStorage {
+  const uploadEndpoint = normalizeEndpointForSdk(
+    config.internalEndpoint || config.publicEndpoint,
+    config.bucket,
+  );
   const client = new OSS({
     region: config.region,
     bucket: config.bucket,
-    endpoint: config.internalEndpoint || config.publicEndpoint,
+    endpoint: uploadEndpoint.endpoint,
+    cname: uploadEndpoint.cname,
     accessKeyId: config.accessKeyId,
     accessKeySecret: config.accessKeySecret,
     secure: true,
@@ -104,10 +126,12 @@ class OssStorage implements ObjectStorage {
     // internal endpoint.
     let publicClient: OssClientLike = this.client;
     if (this.config.internalEndpoint) {
+      const publicEndpoint = normalizeEndpointForSdk(this.config.publicEndpoint, this.config.bucket);
       publicClient = new OSS({
         region: this.config.region,
         bucket: this.config.bucket,
-        endpoint: this.config.publicEndpoint,
+        endpoint: publicEndpoint.endpoint,
+        cname: publicEndpoint.cname,
         accessKeyId: this.config.accessKeyId,
         accessKeySecret: this.config.accessKeySecret,
         secure: true,

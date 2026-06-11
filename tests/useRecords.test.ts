@@ -107,7 +107,7 @@ describe("useRecords (API-backed)", () => {
   it("removeRecord DELETEs and returns the removed record for undo", async () => {
     fetchMock
       .mockResolvedValueOnce(mockJsonResponse({ records: [sampleRecordDto] }))
-      .mockResolvedValueOnce(mockJsonResponse({ record: sampleRecordDto }));
+      .mockResolvedValueOnce(mockJsonResponse({ deletedId: "r1" }));
     const { result } = renderHook(() => useRecords());
     await waitFor(() => expect(result.current.loading).toBe(false));
     let removed: { id?: string } = {};
@@ -118,6 +118,34 @@ describe("useRecords (API-backed)", () => {
     expect(removed.id).toBe("r1");
     expect(result.current.records).toHaveLength(0);
     expect(fetchMock.mock.calls[1][1].method).toBe("DELETE");
+  });
+
+  it("removeRecord hides the record locally even if server delete fails", async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockJsonResponse({ records: [sampleRecordDto] }))
+      .mockResolvedValueOnce(
+        mockJsonResponse({ error: { code: "DATABASE_ERROR", message: "boom" } }, { status: 500 }),
+      )
+      .mockResolvedValueOnce(mockJsonResponse({ records: [sampleRecordDto] }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { result } = renderHook(() => useRecords());
+      await waitFor(() => expect(result.current.loading).toBe(false));
+      let removed: { id?: string } = {};
+      await act(async () => {
+        const r = await result.current.removeRecord("r1");
+        removed = r ?? {};
+      });
+      expect(removed.id).toBe("r1");
+      expect(result.current.records).toHaveLength(0);
+      await waitFor(() => expect(warn).toHaveBeenCalled());
+      await act(async () => {
+        await result.current.reload();
+      });
+      expect(result.current.records).toHaveLength(0);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("restoreRecord re-POSTs a previously deleted record", async () => {

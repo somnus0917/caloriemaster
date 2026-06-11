@@ -19,6 +19,17 @@ interface SwipeState {
 
 const SWIPE_THRESHOLD = 72;
 const SWIPE_MAX = 88;
+const INTERACTIVE_SELECTOR = "button, a, input, select, textarea, [role='button'], [data-swipe-ignore]";
+
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  const element =
+    target instanceof Element
+      ? target
+      : target instanceof Node
+        ? target.parentElement
+        : null;
+  return element?.closest(INTERACTIVE_SELECTOR) !== null;
+}
 
 export function RecordList({
   records,
@@ -37,8 +48,12 @@ export function RecordList({
   const sorted = [...records].sort((a, b) => b.timestamp - a.timestamp);
 
   const handlePointerDown = (e: PointerEvent<HTMLElement>, id: string) => {
+    if (isInteractiveTarget(e.target)) {
+      swipeRef.current = null;
+      return;
+    }
     swipeRef.current = { id, startX: e.clientX, currentX: e.clientX, active: true };
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
   };
 
   const handlePointerMove = (e: PointerEvent<HTMLElement>) => {

@@ -53,7 +53,10 @@ export function RecordCard({ record, today, onEdit, onDelete }: RecordCardProps)
           <button
             className="btn-ghost btn-sm"
             type="button"
-            onClick={() => onEdit(record.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit(record.id);
+            }}
             aria-label="编辑"
           >
             编辑
@@ -61,7 +64,10 @@ export function RecordCard({ record, today, onEdit, onDelete }: RecordCardProps)
           <button
             className="btn-ghost btn-sm"
             type="button"
-            onClick={() => onDelete(record.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(record.id);
+            }}
             aria-label="删除"
           >
             删除

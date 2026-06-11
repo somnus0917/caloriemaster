@@ -131,16 +131,21 @@ export function App() {
 
   const handleDelete = useCallback(
     (id: string) => {
-      void records.removeRecord(id).then((removed) => {
-        if (!removed) return;
-        showUndo("记录已删除", () => {
-          void records.restoreRecord(removed, {
-            dataUrl: recognition?.imageDataUrl ?? undefined,
+      void records
+        .removeRecord(id)
+        .then((removed) => {
+          if (!removed) return;
+          showUndo("记录已删除", () => {
+            void records.restoreRecord(removed, {
+              dataUrl: recognition?.imageDataUrl ?? undefined,
+            });
           });
+        })
+        .catch((err: Error) => {
+          showError(err.message || "删除失败");
         });
-      });
     },
-    [records, showUndo, recognition?.imageDataUrl],
+    [records, showUndo, showError, recognition?.imageDataUrl],
   );
 
   const handleSave = useCallback(() => {
@@ -153,8 +158,8 @@ export function App() {
       return;
     }
     const wasEditing = editingId !== null;
-    const { result, weights, imageDataUrl } = recognition;
-    const thumbnail = imageDataUrl ? { dataUrl: imageDataUrl } : null;
+    const { result, weights, thumbnailUrl } = recognition;
+    const thumbnail = thumbnailUrl ? { dataUrl: thumbnailUrl } : null;
     const promise = wasEditing && editingId
       ? records.updateRecord(editingId, result.foods as Food[], weights).then((r) => (r ? "updated" : null))
       : records.addRecord(result.foods as Food[], weights, thumbnail).then(() => "created");

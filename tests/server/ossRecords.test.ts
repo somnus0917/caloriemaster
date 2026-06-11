@@ -9,8 +9,7 @@
  *   - compensation when sourceId collides (orphan deletion)
  *   - compensation when OSS upload fails (no DB row)
  *   - replace / remove thumbnail actions
- *   - delete cascades to OSS
- *   - delete tolerates OSS failure
+ *   - deleting a record leaves the OSS object untouched
  *   - cross-user image URL access is denied
  *   - SVG / HTTP / oversized inputs rejected
  *   - legacy base64 thumbnail import path
@@ -181,7 +180,7 @@ runIfPg("OSS-backed records", () => {
     expect(storage!.uploads.find((u) => u.userId.includes("svg"))).toBeUndefined();
   });
 
-  it("deletes the OSS object when the record is deleted", async () => {
+  it("leaves the OSS object untouched when the record is deleted", async () => {
     const jar: CookieJar = new Map();
     await registerUser("deleter@example.com", "password1234", jar);
     const deletesBefore = storage!.deletes.length;
@@ -203,10 +202,10 @@ runIfPg("OSS-backed records", () => {
       headers: { cookie: cookieHeader(jar), origin: "http://localhost:3000" },
     });
     expect(del.statusCode).toBe(200);
-    // The delete call must mention the just-uploaded object.
-    expect(storage!.deletes).toContain(objectKey);
-    // Exactly one fewer object than before (we added one, removed one).
-    expect(storage!.objects.size).toBe(objectsBefore);
+    expect(del.json().deletedId).toBe(recordId);
+    expect(storage!.deletes).toHaveLength(deletesBefore);
+    expect(storage!.objects.has(objectKey)).toBe(true);
+    expect(storage!.objects.size).toBe(objectsBefore + 1);
   });
 
   it("cross-user image URL access is denied (user A cannot see B's record)", async () => {
@@ -342,9 +341,9 @@ runIfPg("OSS-backed records", () => {
     void objectKeyAfterFirst;
   });
 
-  it("delete tolerates OSS failures (record still removed)", async () => {
+  it("delete removes the record without touching OSS", async () => {
     const jar: CookieJar = new Map();
-    await registerUser("delete-tolerates@example.com", "password1234", jar);
+    await registerUser("delete-leaves-oss@example.com", "password1234", jar);
     const create = await app!.inject({
       method: "POST",
       url: "/api/records",
@@ -352,24 +351,22 @@ runIfPg("OSS-backed records", () => {
       payload: makeRecordPayload({ thumbnailDataUrl: TINY_PNG }),
     });
     const recordId = create.json().record.id;
-    storage!.opts.failDeletes = true;
-    try {
-      const del = await app!.inject({
-        method: "DELETE",
-        url: `/api/records/${recordId}`,
-        headers: { cookie: cookieHeader(jar), origin: "http://localhost:3000" },
-      });
-      expect(del.statusCode).toBe(200);
-      // Confirm the DB row is gone even though OSS delete failed.
-      const list = await app!.inject({
-        method: "GET",
-        url: "/api/records",
-        headers: { cookie: cookieHeader(jar) },
-      });
-      expect(list.json().records.find((r: { id: string }) => r.id === recordId)).toBeUndefined();
-    } finally {
-      storage!.opts.failDeletes = false;
-    }
+    const beforeDeletes = storage!.deletes.length;
+    const beforeObjects = storage!.objects.size;
+    const del = await app!.inject({
+      method: "DELETE",
+      url: `/api/records/${recordId}`,
+      headers: { cookie: cookieHeader(jar), origin: "http://localhost:3000" },
+    });
+    expect(del.statusCode).toBe(200);
+    expect(storage!.deletes.length).toBe(beforeDeletes);
+    expect(storage!.objects.size).toBe(beforeObjects);
+    const list = await app!.inject({
+      method: "GET",
+      url: "/api/records",
+      headers: { cookie: cookieHeader(jar) },
+    });
+    expect(list.json().records.find((r: { id: string }) => r.id === recordId)).toBeUndefined();
   });
 
   it("imports legacy base64 thumbnails via /api/records/import", async () => {

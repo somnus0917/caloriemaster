@@ -13,11 +13,12 @@
  *      render the image.
  *
  * Failure compensation:
+ *   - OSS unavailable  → record is saved without an image.
  *   - OSS upload fails  → DB never touched, throw IMAGE_UPLOAD_FAILED.
  *   - DB write fails after OSS upload  → best-effort delete the
  *     just-uploaded OSS object so we don't leave orphans.
- *   - OSS delete fails on record removal  → record is gone, log a
- *     structured error for a future cleanup job.
+ *   - Record removal only deletes the DB row. OSS images are left in
+ *     place because end-user deletion is an app-level hide/remove action.
  */
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/client.js";
@@ -27,7 +28,7 @@ import { computeItemTotal, RecordInputSchema, type RecordInput } from "../ai/val
 import { getMealType } from "../../utils/dates.js";
 import { decodeDataUrlImage } from "../storage/dataUrl.js";
 import { ImageProcessingError, processImage } from "../storage/imageProcessor.js";
-import { getObjectStorage } from "../storage/index.js";
+import { getObjectStorage, isStorageConfigured } from "../storage/index.js";
 import type { ObjectStorage, SupportedImageMime, UploadedImage } from "../storage/storage.js";
 
 export interface RecordWithItems {
@@ -263,6 +264,7 @@ export async function createRecord(
   const input = validateRecordInput(rawInput);
   const db = getDb();
   const storage = getObjectStorage();
+  const canStoreImages = isStorageConfigured();
   const items = buildItems(input);
   const totalCalories = items.reduce((s, it) => s + it.totalCalories, 0);
   const mealType = input.mealType || getMealType(input.timestamp);
@@ -277,7 +279,7 @@ export async function createRecord(
 
   try {
     // 2. Image (optional)
-    if (input.thumbnailDataUrl) {
+    if (input.thumbnailDataUrl && canStoreImages) {
       uploaded = await processAndUpload(userId, recordId, input.thumbnailDataUrl, storage);
     }
 
@@ -362,6 +364,7 @@ export async function updateRecord(
   }
   const db = getDb();
   const storage = getObjectStorage();
+  const canStoreImages = isStorageConfigured();
   const items = buildItems(input);
   const totalCalories = items.reduce((s, it) => s + it.totalCalories, 0);
   const mealType = input.mealType || getMealType(input.timestamp);
@@ -373,7 +376,7 @@ export async function updateRecord(
   const oldObjectKey: string | null = existing.record.imageObjectKey;
 
   try {
-    if (action.type === "replace") {
+    if (action.type === "replace" && canStoreImages) {
       newImage = await processAndUpload(userId, recordId, action.dataUrl, storage);
     }
 
@@ -429,21 +432,19 @@ export async function updateRecord(
   }
 }
 
-export async function deleteRecord(userId: string, recordId: string): Promise<RecordWithItems> {
+export async function deleteRecord(userId: string, recordId: string): Promise<{ deletedId: string }> {
   const existing = await getRecordForUser(userId, recordId);
   if (!existing) {
     throw new ApiError(404, ErrorCode.RECORD_NOT_FOUND, "记录不存在或无权访问");
   }
   const db = getDb();
-  const objectKey = existing.record.imageObjectKey;
-  await db
-    .delete(foodRecords)
-    .where(and(eq(foodRecords.id, recordId), eq(foodRecords.userId, userId)));
-  await db.delete(foodItems).where(eq(foodItems.recordId, recordId));
-  if (objectKey) {
-    await safeDelete(getObjectStorage(), objectKey, { reason: "record-deleted", userId, recordId });
-  }
-  return toRecordView(existing.record, existing.items);
+  await db.transaction(async (tx) => {
+    await tx.delete(foodItems).where(eq(foodItems.recordId, recordId));
+    await tx
+      .delete(foodRecords)
+      .where(and(eq(foodRecords.id, recordId), eq(foodRecords.userId, userId)));
+  });
+  return { deletedId: recordId };
 }
 
 export interface SignedImageUrl {

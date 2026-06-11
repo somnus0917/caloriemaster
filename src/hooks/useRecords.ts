@@ -10,6 +10,7 @@ import {
   type ThumbnailAction,
 } from "../services/records";
 import { signedUrlCache } from "../services/signedUrlCache";
+import { hideRecord, isRecordHidden, unhideRecord } from "../services/hiddenRecords";
 import { buildDemoWeek } from "../data/demoData";
 import { getMealType } from "../utils/dates";
 import { computeTotalCalories } from "../utils/validation";
@@ -119,6 +120,7 @@ export function useRecords(enabled: boolean = true): UseRecordsReturn {
     try {
       const dtos = await listRecords({ limit: 500 });
       const next = dtos
+        .filter((dto) => !isRecordHidden(dto.id))
         .map(dtoToRecord)
         .sort((a, b) => b.timestamp - a.timestamp);
       recordsRef.current = next;
@@ -179,13 +181,18 @@ export function useRecords(enabled: boolean = true): UseRecordsReturn {
   const removeRecord = useCallback(async (id: string): Promise<Record | null> => {
     const existing = recordsRef.current.find((r) => r.id === id);
     if (!existing) return null;
-    const dto = await apiDelete(id);
-    const rec = dtoToRecord(dto);
+    hideRecord(id);
     signedUrlCache.invalidate(id);
     const next = recordsRef.current.filter((r) => r.id !== id);
     recordsRef.current = next;
     setRecords(next);
-    return rec;
+    void apiDelete(id).catch((err) => {
+      console.warn("[records] server delete failed; record remains hidden locally", {
+        id,
+        err: err instanceof Error ? err.message : err,
+      });
+    });
+    return existing;
   }, []);
 
   const restoreRecord = useCallback(
@@ -197,6 +204,7 @@ export function useRecords(enabled: boolean = true): UseRecordsReturn {
         // Already there — e.g. user tapped undo twice.
         return recordsRef.current.find((r) => r.id === record.id) ?? null;
       }
+      unhideRecord(record.id);
       const input = buildInput(
         record.foods,
         record.foods.map((f) => f.weight_g),
