@@ -71,8 +71,14 @@ ensure_deps() {
 }
 
 # ===== PostgreSQL ======================================================
+docker_daemon_ok() {
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info >/dev/null 2>&1 || return 1
+  return 0
+}
+
 pg_detect() {
-  if command -v docker >/dev/null 2>&1; then
+  if docker_daemon_ok; then
     echo "docker"
     return
   fi
@@ -110,18 +116,22 @@ pg_start() {
   case "$PG_BACKEND" in
     docker)
       info "用 Docker 启动 PostgreSQL..."
-      docker run -d --rm --name caloriemaster-postgres \
+      if ! docker run -d --rm --name caloriemaster-postgres \
         -e POSTGRES_USER=caloriemaster \
         -e POSTGRES_PASSWORD=caloriemaster \
         -e POSTGRES_DB=caloriemaster \
         -p 5432:5432 \
-        postgres:16-alpine
-      for i in $(seq 1 30); do
-        if pg_running; then ok "PostgreSQL 已启动"; return 0; fi
-        sleep 1
-      done
-      err "PostgreSQL 30s 内未就绪"
-      exit 1
+        postgres:16-alpine; then
+        warn "Docker 启动失败；fallback 到 brew PostgreSQL"
+        PG_BACKEND="brew"
+        if ! command -v /opt/homebrew/opt/postgresql@16/bin/psql >/dev/null 2>&1; then
+          err "brew PostgreSQL 也没装。请启动 Docker Desktop 或 brew install postgresql@16"
+          exit 1
+        fi
+        info "用 brew PostgreSQL 启动..."
+        LC_ALL="en_US.UTF-8" /opt/homebrew/opt/postgresql@16/bin/pg_ctl \
+          -D /opt/homebrew/var/postgresql@16 -l /tmp/pglog.log start
+      fi
       ;;
     brew)
       info "用 brew PostgreSQL 启动..."
@@ -286,6 +296,10 @@ cmd_smoke() {
     sleep 1
   done
 
+  # 在 dev 模式下，CSRF 接受 Origin: localhost:5173 / 127.0.0.1:5173 / 缺失。
+  # 直接 curl 3000 时必须显式带 Origin 与 APP_ORIGIN 匹配，否则 403。
+  local ORIGIN="${APP_ORIGIN:-http://localhost:5173}"
+
   info "1) GET /api/health"
   curl -s http://127.0.0.1:3000/api/health | head -1
   echo
@@ -294,7 +308,7 @@ cmd_smoke() {
   rm -f /tmp/cm-smoke-cookies.txt
   curl -s -c /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/auth/register \
     -H "Content-Type: application/json" \
-    -H "Origin: http://localhost:3000" \
+    -H "Origin: $ORIGIN" \
     -d '{"email":"smoke@example.com","password":"password1234"}' | head -1
   echo
 
@@ -305,13 +319,13 @@ cmd_smoke() {
   info "4) POST /api/records (no image)"
   curl -s -b /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/records \
     -H "Content-Type: application/json" \
-    -H "Origin: http://localhost:3000" \
+    -H "Origin: $ORIGIN" \
     -d '{"timestamp":1700000000000,"mealType":"午餐","items":[{"name":"测试","weightG":100,"caloriesPer100g":100}]}' | head -1
   echo
 
   info "5) POST /api/auth/logout"
   curl -s -b /tmp/cm-smoke-cookies.txt -X POST http://127.0.0.1:3000/api/auth/logout \
-    -H "Origin: http://localhost:3000" | head -1
+    -H "Origin: $ORIGIN" | head -1
   echo
 
   ok "冒烟测试完成"

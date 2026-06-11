@@ -51,9 +51,17 @@ const ConfigSchema = z
     OSS_REGION: z.string().default(""),
     OSS_BUCKET: z.string().default(""),
     /** Public endpoint used for signed GET URLs the browser loads from. */
-    OSS_PUBLIC_ENDPOINT: z.string().url().optional(),
+    OSS_PUBLIC_ENDPOINT: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.length > 0 ? v : undefined))
+      .pipe(z.string().url().optional()),
     /** Optional internal endpoint (same-region ECS) used for upload/delete. */
-    OSS_INTERNAL_ENDPOINT: z.string().url().optional(),
+    OSS_INTERNAL_ENDPOINT: z
+      .string()
+      .optional()
+      .transform((v) => (v && v.length > 0 ? v : undefined))
+      .pipe(z.string().url().optional()),
     OSS_ACCESS_KEY_ID: z.string().default(""),
     OSS_ACCESS_KEY_SECRET: z.string().default(""),
     OSS_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(600),
