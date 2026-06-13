@@ -128,16 +128,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   await registerRecordRoutes(app);
   await registerSettingsRoutes(app);
 
-  // 404 for unknown /api/* paths.
-  app.setNotFoundHandler((request, reply) => {
-    if ((request.url || "").startsWith("/api/")) {
-      return sendError(reply, 404, ErrorCode.ROUTE_NOT_FOUND, "接口不存在");
-    }
-    // For non-API paths in production, the SPA fallback below will
-    // serve index.html. In dev, Vite is the one serving the SPA.
-    return reply.code(404).send("Not found");
-  });
-
   // Centralised error handler — never leak stack traces.
   app.setErrorHandler((err, _request, reply) => {
     if (err instanceof ApiError) {
@@ -164,6 +154,14 @@ export async function buildApp(): Promise<FastifyInstance> {
         return sendError(reply, 404, ErrorCode.ROUTE_NOT_FOUND, "接口不存在");
       }
       return reply.sendFile("index.html");
+    });
+  } else {
+    // In dev, Vite serves the SPA and Fastify only owns the API surface.
+    app.setNotFoundHandler((request, reply) => {
+      if ((request.url || "").startsWith("/api/")) {
+        return sendError(reply, 404, ErrorCode.ROUTE_NOT_FOUND, "接口不存在");
+      }
+      return reply.code(404).send("Not found");
     });
   }
 
