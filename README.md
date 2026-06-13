@@ -73,15 +73,20 @@ npm run dev
 **方式 B：Docker Compose（推荐）**
 
 ```bash
-# 在 .env 或 shell 里设置 QWEN_API_KEY / BOOHEE_API_KEY
-export QWEN_API_KEY=sk-xxxxxxxx
-export APP_ORIGIN=https://calorie.example.com  # 公网域名
+# 服务器生产部署：先复制并编辑 .env
+cp .env.example .env
+# 至少设置：
+# NODE_ENV=production
+# APP_ORIGIN=https://xn--rhqt4frvcyuma120e2nl3sb0w5cc9gfrdh28idgq.somnus.top
+# TRUST_PROXY=true
+# POSTGRES_PASSWORD=<strong-password>
+# QWEN_API_KEY=<your-key>
 
-docker compose up --build
-# → http://localhost:3000
+./scripts/deploy.sh
+# → https://郑思雅是全世界最可爱的宝宝.somnus.top
 ```
 
-首次启动会自动跑 Drizzle migration；PostgreSQL 数据持久化在 named volume `pg_data`。
+生产部署不自动跑 Drizzle migration；`./scripts/deploy.sh` 会先构建镜像、启动 PostgreSQL、显式执行 migration，再重启 app 和 Caddy。PostgreSQL 数据持久化在 named volume `pg_data`。
 
 ## 数据模型
 
@@ -213,16 +218,18 @@ ai_usage (
 
 ```dotenv
 TRUST_PROXY=true
-APP_ORIGIN=https://calorie.example.com
+APP_ORIGIN=https://xn--rhqt4frvcyuma120e2nl3sb0w5cc9gfrdh28idgq.somnus.top
 SESSION_COOKIE_NAME=caloriemaster_session  # 可选，保持默认
 ```
 
 **Caddyfile 示例**：
 ```
-calorie.example.com {
-  reverse_proxy 127.0.0.1:3000 {
-    header_up X-Forwarded-For {remote_host}
-    header_up X-Forwarded-Proto https
+# Punycode for: 郑思雅是全世界最可爱的宝宝.somnus.top
+xn--rhqt4frvcyuma120e2nl3sb0w5cc9gfrdh28idgq.somnus.top {
+  reverse_proxy app:3000
+
+  request_body {
+    max_size 20MB
   }
 }
 ```
@@ -381,6 +388,13 @@ OSS_INTERNAL_ENDPOINT=https://your-private-bucket.oss-cn-hangzhou-internal.aliyu
 ## 备份建议
 
 `docker compose exec postgres pg_dump -U caloriemaster -d caloriemaster -Fc -f /tmp/backup.dump` 定期备份。`docker compose cp` 把 dump 拉出来。建议至少每日 1 次。
+
+生产升级建议固定走：
+
+```bash
+git pull
+./scripts/deploy.sh
+```
 
 ## 环境变量
 

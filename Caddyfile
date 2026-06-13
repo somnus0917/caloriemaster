@@ -1,0 +1,9 @@
+# Punycode for: 郑思雅是全世界最可爱的宝宝.somnus.top
+xn--rhqt4frvcyuma120e2nl3sb0w5cc9gfrdh28idgq.somnus.top {
+    reverse_proxy app:3000
+
+    # 限制上传大小（图片识别可能较大）
+    request_body {
+        max_size 20MB
+    }
+}

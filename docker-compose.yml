@@ -1,13 +1,11 @@
-# Local development / single-host deployment.
-# Use `docker compose up --build` to start.
+# Production deployment with Caddy (auto HTTPS).
+# Use `./scripts/deploy.sh` on the server for the normal deploy flow:
+# build image -> run migrations -> restart services.
 #
-# Production notes:
-#   - The app is exposed on port 3000; put a reverse proxy in front of it.
-#   - Set APP_ORIGIN to the externally-visible origin (https://...).
-#   - TRUST_PROXY=true so Fastify honours X-Forwarded-* from your proxy.
-#   - The Postgres data is persisted in the named volume `pg_data`.
-#
-# Tests: see README → "Running server tests".
+# Prerequisites:
+#   1. DNS A/AAAA record pointing your domain to this server.
+#   2. Ports 80 and 443 open in firewall.
+#   3. .env configured with APP_ORIGIN=https://xn--rhqt4frvcyuma120e2nl3sb0w5cc9gfrdh28idgq.somnus.top
 
 services:
   postgres:
@@ -25,8 +23,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
 
   app:
     build: .
@@ -42,6 +38,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-caloriemaster}:${POSTGRES_PASSWORD:-caloriemaster}@postgres:5432/${POSTGRES_DB:-caloriemaster}
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:3000}
       TRUST_PROXY: ${TRUST_PROXY:-true}
+      AUTO_MIGRATE: ${AUTO_MIGRATE:-false}
       SESSION_COOKIE_NAME: caloriemaster_session
       SESSION_TTL_DAYS: 30
       QWEN_API_KEY: ${QWEN_API_KEY}
@@ -59,8 +56,24 @@ services:
       AI_RATE_LIMIT_PER_MINUTE: ${AI_RATE_LIMIT_PER_MINUTE:-5}
       AI_DAILY_QUOTA: ${AI_DAILY_QUOTA:-100}
       AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-10}
+      AI_IP_RATE_LIMIT_PER_MINUTE: ${AI_IP_RATE_LIMIT_PER_MINUTE:-20}
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caloriemaster-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
     ports:
-      - "${APP_PORT:-3000}:3000"
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
 
 volumes:
   pg_data:
+  caddy_data:
+  caddy_config:
