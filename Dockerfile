@@ -4,7 +4,16 @@ FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
 # system deps for argon2 native build (fallback if no prebuilt binary)
-RUN apt-get update \
+ARG APT_MIRROR=http://mirrors.tencentyun.com/debian
+ARG APT_SECURITY_MIRROR=http://mirrors.tencentyun.com/debian-security
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' \
+      "deb ${APT_MIRROR} bookworm main" \
+      "deb ${APT_MIRROR} bookworm-updates main" \
+      "deb ${APT_SECURITY_MIRROR} bookworm-security main" \
+      > /etc/apt/sources.list; \
+    apt-get update \
  && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
