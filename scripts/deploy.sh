@@ -22,7 +22,7 @@ echo "Starting PostgreSQL..."
 docker compose up -d postgres
 
 echo "Running database migrations..."
-docker compose run --rm app npm run db:migrate
+docker compose run --rm app node dist-server/server/db/migrate.js
 
 echo "Starting application and Caddy..."
 docker compose up -d app caddy

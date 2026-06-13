@@ -86,7 +86,7 @@ cp .env.example .env
 # → https://郑思雅是全世界最可爱的宝宝.somnus.top
 ```
 
-生产部署不自动跑 Drizzle migration；`./scripts/deploy.sh` 会先构建镜像、启动 PostgreSQL、显式执行 migration，再重启 app 和 Caddy。PostgreSQL 数据持久化在 named volume `pg_data`。
+生产部署不自动跑 Drizzle migration；`./scripts/deploy.sh` 会先构建镜像、启动 PostgreSQL、用生产镜像里的编译产物显式执行 migration，再重启 app 和 Caddy。PostgreSQL 数据持久化在 named volume `pg_data`。
 
 ## 数据模型
 
